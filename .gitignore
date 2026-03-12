@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+.venv/
 
 # Local runtime data
 openfang_memory_evolution/data/*.db

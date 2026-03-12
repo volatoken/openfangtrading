@@ -26,6 +26,26 @@ openfang_memory_evolution/
 
 ## Cách chạy
 
+### One-click trên Windows
+
+Từ thư mục root repo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -RunDemo
+```
+
+- Chỉ setup môi trường, không chạy demo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+- Cài thêm FAISS backend:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -InstallFaiss
+```
+
 1. Cài dependency:
 
 ```bash
