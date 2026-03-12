@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local runtime data
+openfang_memory_evolution/data/*.db
+openfang_memory_evolution/data/*.json
+
+# Local tools
+tools/
+
+# OS/editor
+.DS_Store
+Thumbs.db

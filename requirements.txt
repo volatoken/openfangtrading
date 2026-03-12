@@ -1,0 +1,2 @@
+# Core demo runs on Python standard library only.
+# Optional: pip install faiss-cpu
