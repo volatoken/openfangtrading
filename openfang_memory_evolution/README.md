@@ -1,82 +1,138 @@
 # OpenFang Memory Evolution (SQLite + FAISS + LLM Prompt)
 
-Project scaffold cho kiến trúc:
+Project scaffold for:
 
 - Market data ingestion -> feature extraction (RSI, MACD)
-- Long-term memory bằng `SQLite`
-- Vector retrieval qua lớp FAISS-compatible (mặc định dùng cosine search thuần Python)
-- Feedback loop WIN/LOSS để tăng/giảm trọng số chiến lược
-- Memory summaries + pruning theo chu kỳ
-- Semantic ranking + decision Buy/Sell/Hold
+- Long-term memory in `SQLite`
+- Vector retrieval via FAISS-compatible layer (default: pure Python cosine search)
+- Feedback loop WIN/LOSS to adjust strategy weights
+- Memory summaries + pruning over cycles
+- Semantic ranking + BUY/SELL/HOLD decision
 
-## Cấu trúc module
+## Module Structure
 
-```
+```text
 openfang_memory_evolution/
-├── MarketDataModule
-├── FeatureExtractionModule
-├── MemoryModule
-├── MemoryEvolutionModule
-├── SemanticRankingModule
-├── LLMModule
-├── DecisionMakingModule
-├── ExecutionModule
-└── app.py
+|-- MarketDataModule
+|-- FeatureExtractionModule
+|-- MemoryModule
+|-- MemoryEvolutionModule
+|-- SemanticRankingModule
+|-- LLMModule
+|-- DecisionMakingModule
+|-- ExecutionModule
+`-- app.py
 ```
 
-## Cách chạy
+## Quick Start (Windows one-click)
 
-### One-click trên Windows
-
-Từ thư mục root repo:
+From repo root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -RunDemo
 ```
 
-- Chỉ setup môi trường, không chạy demo:
+Setup only (no demo run):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-- Cài thêm FAISS backend:
+Install optional FAISS backend:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -InstallFaiss
 ```
 
-1. Cài dependency:
+## Manual Run
+
+1. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Tùy chọn (nếu muốn dùng FAISS backend thật):
+Optional:
 
 ```bash
 pip install faiss-cpu
 ```
 
-2. Chạy demo:
+2. Run demo:
 
 ```bash
 python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 10
 ```
 
-## Memory Evolution đang hoạt động thế nào
+## Memory Evolution: Detailed Behavior
 
-- Sau mỗi trade:
-  - Lưu trade vào SQLite.
-  - Nếu có action BUY/SELL và có strategy được chọn: feedback loop cập nhật `wins/losses/weight`.
-- Mỗi 5 cycle:
-  - Sinh summary cho từng strategy.
-  - Prune strategy kém (không đạt `min_win_rate` khi đã đủ `min_trades`).
-  - Đồng bộ lại vector index.
+### 1) What happens after each trade cycle
 
-## Điểm mở rộng production
+In each call of `run_cycle` (`app.py`):
 
-- Thay `MarketDataModule.DataCollector` bằng API thật (Binance/Kraken).
-- Thay `LLMModule.LLMManager` bằng OpenAI/LLM provider thật.
-- Thay `ExecutionModule.APIHandler` bằng client đặt lệnh real.
-- Thêm risk management (position sizing, stop loss, max drawdown).
+- Market data is collected and transformed to indicators/features.
+- Similar strategies are retrieved from memory index.
+- Strategies are ranked semantically (similarity + confidence + risk + historical weight).
+- Decision is made: `BUY`, `SELL`, or `HOLD`.
+- Trade record is always stored in SQLite (`trades` table), including:
+  - `pnl`, `is_win`, `confidence`, `risk`, `reasoning`, `market_context_json`
+
+### 2) Online learning trigger (immediate self-learning)
+
+Feedback loop is applied only when:
+
+- action is `BUY` or `SELL`, and
+- a valid `strategy_id` exists
+
+Then strategy stats are updated in SQLite (`strategies` table):
+
+- If WIN (`pnl > 0`):
+  - `wins += 1`
+  - `weight += win_weight_boost` (default `+0.1`, capped at `3.0`)
+- If LOSS (`pnl <= 0`):
+  - `losses += 1`
+  - `weight -= loss_weight_decay` (default `-0.1`, floored at `0.1`)
+
+This means self-learning starts from the first BUY/SELL trade.
+
+### 3) Batch evolution every 5 cycles
+
+Every 5 cycles (`cycle_count % 5 == 0`), maintenance runs:
+
+- `MemorySummaries.run()`:
+  - rebuilds summary for each strategy:
+  - `trades`, `win_rate`, `weight`, `active`
+- `MemoryPruning.run()`:
+  - checks bad-performing strategies and deactivates them
+- `vector_index.save()`:
+  - persists updated vector memory/index to disk
+
+### 4) Pruning conditions
+
+A strategy is considered for pruning only if:
+
+- total trades (`wins + losses`) >= `min_trades_for_pruning` (default `5`)
+
+Then:
+
+- if `win_rate < min_win_rate_for_active` (default `0.4`):
+  - strategy becomes `active = 0` in SQLite
+  - strategy is removed from active vector index
+
+Pruning here is soft-delete (deactivation), not hard-delete.
+
+### 5) Time-based vs cycle-based behavior
+
+Current implementation is cycle-based, not wall-clock based:
+
+- Online feedback: per BUY/SELL trade, immediately
+- Summary/pruning/index-sync: every 5 cycles
+
+So you do not need to wait 24h for learning to start.
+
+## Production Extension Points
+
+- Replace `MarketDataModule.DataCollector` with real Binance/Kraken feeds
+- Replace `LLMModule.LLMManager` with real OpenAI/LLM provider calls
+- Replace `ExecutionModule.APIHandler` with real exchange order client
+- Add risk controls: position sizing, stop-loss, max drawdown, exposure limits
