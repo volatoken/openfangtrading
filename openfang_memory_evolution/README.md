@@ -64,6 +64,33 @@ pip install faiss-cpu
 python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 10
 ```
 
+## Telegram Data Sync (continuous ingestion)
+
+You can continuously ingest Telegram channel posts via Telegram Bot API and store them in SQLite.
+
+Environment or CLI:
+
+- `TELEGRAM_BOT_TOKEN`
+- optional channel filter: `--telegram-channel-id`
+
+Run sync-only worker:
+
+```bash
+python -m openfang_memory_evolution.app --telegram-sync-only --telegram-source-key otl_channel --telegram-poll-seconds 10
+```
+
+Run trading cycles + sync before each cycle:
+
+```bash
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-sync --telegram-source-key otl_channel
+```
+
+New SQLite tables:
+
+- `telegram_sync_state`
+- `telegram_message_history`
+- `telegram_metric_history`
+
 ## Memory Evolution: Detailed Behavior
 
 ### 1) What happens after each trade cycle

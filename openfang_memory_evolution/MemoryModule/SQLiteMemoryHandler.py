@@ -89,6 +89,45 @@ class SQLiteMemoryHandler:
                 snapshot_ts TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS telegram_sync_state (
+                source_key TEXT PRIMARY KEY,
+                last_update_id INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS telegram_message_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_key TEXT NOT NULL,
+                update_id INTEGER NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                posted_at TEXT NOT NULL,
+                text_content TEXT NOT NULL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_key, update_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS telegram_metric_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_key TEXT NOT NULL,
+                update_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                btc_index REAL,
+                options_24h_vol REAL,
+                options_24h_trades REAL,
+                futures_24h_trades REAL,
+                funding_8h REAL,
+                top_volume_expiration TEXT,
+                top_volume_strike REAL,
+                dominant_contract TEXT,
+                max_pain REAL,
+                poc REAL,
+                parsed_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         self._conn.commit()
@@ -410,6 +449,145 @@ class SQLiteMemoryHandler:
                 """,
                 (symbol, limit),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_sync_state(self, source_key: str) -> int:
+        row = self._conn.execute(
+            """
+            SELECT last_update_id
+            FROM telegram_sync_state
+            WHERE source_key = ?
+            """,
+            (source_key,),
+        ).fetchone()
+        if not row:
+            return 0
+        return int(row["last_update_id"])
+
+    def upsert_sync_state(self, source_key: str, last_update_id: int) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO telegram_sync_state (source_key, last_update_id, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(source_key) DO UPDATE
+            SET last_update_id = excluded.last_update_id,
+                updated_at = excluded.updated_at
+            """,
+            (source_key, int(last_update_id), now),
+        )
+        self._conn.commit()
+
+    def insert_telegram_message(
+        self,
+        source_key: str,
+        update_id: int,
+        channel_id: str,
+        message_id: int,
+        posted_at: str,
+        text_content: str,
+        raw_json: dict[str, Any],
+    ) -> bool:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        cur = self._conn.execute(
+            """
+            INSERT OR IGNORE INTO telegram_message_history (
+                source_key, update_id, channel_id, message_id, posted_at, text_content, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_key,
+                int(update_id),
+                channel_id,
+                int(message_id),
+                posted_at,
+                text_content,
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def insert_telegram_metric(
+        self,
+        source_key: str,
+        update_id: int,
+        message_id: int,
+        metric: dict[str, Any],
+    ) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO telegram_metric_history (
+                source_key, update_id, message_id, symbol, btc_index,
+                options_24h_vol, options_24h_trades, futures_24h_trades, funding_8h,
+                top_volume_expiration, top_volume_strike, dominant_contract,
+                max_pain, poc, parsed_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_key,
+                int(update_id),
+                int(message_id),
+                str(metric.get("symbol", "BTC")),
+                metric.get("btc_index"),
+                metric.get("options_24h_vol"),
+                metric.get("options_24h_trades"),
+                metric.get("futures_24h_trades"),
+                metric.get("funding_8h"),
+                metric.get("top_volume_expiration"),
+                metric.get("top_volume_strike"),
+                metric.get("dominant_contract"),
+                metric.get("max_pain"),
+                metric.get("poc"),
+                json.dumps(metric),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def fetch_latest_telegram_metric(
+        self,
+        source_key: str,
+        symbol: str = "BTC",
+    ) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT *
+            FROM telegram_metric_history
+            WHERE source_key = ? AND symbol = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (source_key, symbol),
+        ).fetchone()
+        if not row:
+            return None
+        output = dict(row)
+        try:
+            output["parsed_json"] = json.loads(str(row["parsed_json"]))
+        except json.JSONDecodeError:
+            output["parsed_json"] = {}
+        return output
+
+    def fetch_recent_telegram_messages(
+        self,
+        source_key: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT update_id, channel_id, message_id, posted_at, text_content
+            FROM telegram_message_history
+            WHERE source_key = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (source_key, limit),
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def _row_to_strategy(self, row: sqlite3.Row) -> StrategyRecord:

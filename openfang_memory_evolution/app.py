@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from pathlib import Path
+import time
 from typing import Any
 
 from openfang_memory_evolution.config.settings import Settings, load_settings
@@ -28,11 +30,16 @@ from openfang_memory_evolution.ExecutionModule.APIHandler import APIHandler
 from openfang_memory_evolution.ExecutionModule.TradeExecutor import TradeExecutor
 from openfang_memory_evolution.OptionAnalyticsModule.OptionFlowAnalyzer import OptionFlowAnalyzer
 from openfang_memory_evolution.StrategyModule.StrategyCatalog import get_default_strategy_seeds
+from openfang_memory_evolution.TelegramModule.TelegramSyncService import (
+    TelegramSyncConfig,
+    TelegramSyncService,
+)
 
 
 class OpenFangEngine:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, telegram_source_key: str | None = None) -> None:
         self.settings = settings
+        self.telegram_source_key = telegram_source_key
         self.data_collector = DataCollector()
         self.data_processor = DataProcessor()
         self.data_transformer = DataTransformer()
@@ -139,6 +146,18 @@ class OpenFangEngine:
             "mp_reversion_direction": option_signal.mp_reversion_direction,
             "mp_divergence_score": option_signal.mp_divergence_score,
         }
+
+        if self.telegram_source_key:
+            tgm = self.sqlite_handler.fetch_latest_telegram_metric(
+                source_key=self.telegram_source_key,
+                symbol="BTC",
+            )
+            if tgm:
+                market_context["telegram_btc_index"] = tgm.get("btc_index")
+                market_context["telegram_top_volume_expiration"] = tgm.get("top_volume_expiration")
+                market_context["telegram_top_volume_strike"] = tgm.get("top_volume_strike")
+                market_context["telegram_max_pain"] = tgm.get("max_pain")
+                market_context["telegram_poc"] = tgm.get("poc")
         return market_context, vector, snapshot.timestamp.isoformat(), snapshot.option_bubbles
 
     def run_cycle(self, symbol: str) -> dict[str, Any]:
@@ -218,6 +237,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="OpenFang Memory Evolution Demo")
     parser.add_argument("--symbol", default="BTCUSDT", help="Trading symbol")
     parser.add_argument("--cycles", type=int, default=10, help="Number of decision cycles")
+    parser.add_argument("--telegram-sync", action="store_true", help="Sync Telegram data before each cycle")
+    parser.add_argument("--telegram-sync-only", action="store_true", help="Run only Telegram sync worker loop")
+    parser.add_argument("--telegram-bot-token", default="", help="Telegram bot token")
+    parser.add_argument("--telegram-channel-id", default="", help="Telegram channel id filter")
+    parser.add_argument("--telegram-source-key", default="telegram_default", help="Source key for Telegram sync state")
+    parser.add_argument("--telegram-symbol", default="BTC", help="Symbol label for parsed Telegram metrics")
+    parser.add_argument("--telegram-poll-timeout", type=int, default=20, help="Telegram long-poll timeout seconds")
+    parser.add_argument("--telegram-poll-seconds", type=int, default=10, help="Sleep seconds between sync loops")
+    parser.add_argument(
+        "--telegram-sync-iterations",
+        type=int,
+        default=0,
+        help="Sync loop iterations in --telegram-sync-only mode (0 means infinite)",
+    )
     return parser.parse_args()
 
 
@@ -225,9 +258,47 @@ def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parent
     settings = load_settings(root)
-    engine = OpenFangEngine(settings)
+    should_sync_tg = args.telegram_sync or args.telegram_sync_only
+    tg_token = args.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    tg_config: TelegramSyncConfig | None = None
+    if should_sync_tg:
+        if not tg_token:
+            raise SystemExit("Telegram sync requested but TELEGRAM_BOT_TOKEN is missing.")
+        tg_config = TelegramSyncConfig(
+            bot_token=tg_token,
+            source_key=args.telegram_source_key,
+            channel_id=args.telegram_channel_id or None,
+            symbol=args.telegram_symbol,
+            poll_timeout_sec=max(1, int(args.telegram_poll_timeout)),
+            poll_interval_sec=max(1, int(args.telegram_poll_seconds)),
+        )
+
+    if args.telegram_sync_only:
+        tg_handler = SQLiteMemoryHandler(settings.sqlite_path)
+        sync_service = TelegramSyncService(config=tg_config, sqlite_handler=tg_handler)
+        iterations = int(args.telegram_sync_iterations)
+        count = 0
+        try:
+            while True:
+                result = sync_service.sync_once()
+                print(f"[telegram-sync-only] {result}")
+                count += 1
+                if iterations > 0 and count >= iterations:
+                    break
+                time.sleep(max(1, args.telegram_poll_seconds))
+        finally:
+            tg_handler.close()
+        return
+
+    engine = OpenFangEngine(settings, telegram_source_key=(args.telegram_source_key if should_sync_tg else None))
+    sync_service: TelegramSyncService | None = None
+    if args.telegram_sync and tg_config:
+        sync_service = TelegramSyncService(config=tg_config, sqlite_handler=engine.sqlite_handler)
     try:
         for i in range(args.cycles):
+            if sync_service and args.telegram_sync:
+                result = sync_service.sync_once()
+                print(f"[telegram-sync] {result}")
             output = engine.run_cycle(args.symbol)
             print(f"[cycle {i + 1}] {output}")
 
