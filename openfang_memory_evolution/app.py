@@ -241,6 +241,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--telegram-sync-only", action="store_true", help="Run only Telegram sync worker loop")
     parser.add_argument("--telegram-bot-token", default="", help="Telegram bot token")
     parser.add_argument("--telegram-channel-id", default="", help="Telegram channel id filter")
+    parser.add_argument(
+        "--telegram-channel",
+        default="",
+        help="Telegram channel username or link (example: AI_otl_Alert or https://t.me/AI_otl_Alert)",
+    )
     parser.add_argument("--telegram-source-key", default="telegram_default", help="Source key for Telegram sync state")
     parser.add_argument("--telegram-symbol", default="BTC", help="Symbol label for parsed Telegram metrics")
     parser.add_argument("--telegram-poll-timeout", type=int, default=20, help="Telegram long-poll timeout seconds")
@@ -268,6 +273,7 @@ def main() -> None:
             bot_token=tg_token,
             source_key=args.telegram_source_key,
             channel_id=args.telegram_channel_id or None,
+            channel_username=args.telegram_channel or None,
             symbol=args.telegram_symbol,
             poll_timeout_sec=max(1, int(args.telegram_poll_timeout)),
             poll_interval_sec=max(1, int(args.telegram_poll_seconds)),

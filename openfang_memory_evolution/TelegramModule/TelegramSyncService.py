@@ -16,6 +16,7 @@ class TelegramSyncConfig:
     bot_token: str
     source_key: str = "telegram_default"
     channel_id: str | None = None
+    channel_username: str | None = None
     symbol: str = "BTC"
     poll_timeout_sec: int = 25
     poll_interval_sec: int = 10
@@ -94,7 +95,16 @@ class TelegramSyncService:
         config: TelegramSyncConfig,
         sqlite_handler: SQLiteMemoryHandler,
     ) -> None:
-        self.config = config
+        normalized_username = self._normalize_channel_username(config.channel_username)
+        self.config = TelegramSyncConfig(
+            bot_token=config.bot_token,
+            source_key=config.source_key,
+            channel_id=config.channel_id,
+            channel_username=normalized_username,
+            symbol=config.symbol,
+            poll_timeout_sec=config.poll_timeout_sec,
+            poll_interval_sec=config.poll_interval_sec,
+        )
         self.sqlite_handler = sqlite_handler
         self.client = TelegramBotClient(config.bot_token)
         self.parser = TelegramMessageParser()
@@ -116,9 +126,13 @@ class TelegramSyncService:
             message = item.get("channel_post") or item.get("message")
             if not message:
                 continue
-            channel_raw = message.get("chat", {}).get("id")
+            chat = message.get("chat", {})
+            channel_raw = chat.get("id")
             channel_id = str(channel_raw) if channel_raw is not None else ""
+            chat_username = self._normalize_channel_username(chat.get("username"))
             if self.config.channel_id and channel_id != self.config.channel_id:
+                continue
+            if self.config.channel_username and chat_username != self.config.channel_username:
                 continue
 
             text_content = str(message.get("text") or message.get("caption") or "").strip()
@@ -183,3 +197,16 @@ class TelegramSyncService:
                 f"last_update_id={result['last_update_id']}"
             )
             time.sleep(self.config.poll_interval_sec)
+
+    def _normalize_channel_username(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        raw = raw.replace("https://t.me/", "").replace("http://t.me/", "").strip()
+        if raw.startswith("@"):
+            raw = raw[1:]
+        if "/" in raw:
+            raw = raw.split("/", 1)[0]
+        return raw.lower()

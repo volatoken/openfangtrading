@@ -71,18 +71,18 @@ You can continuously ingest Telegram channel posts via Telegram Bot API and stor
 Environment or CLI:
 
 - `TELEGRAM_BOT_TOKEN`
-- optional channel filter: `--telegram-channel-id`
+- optional channel filters: `--telegram-channel-id` or `--telegram-channel`
 
 Run sync-only worker:
 
 ```bash
-python -m openfang_memory_evolution.app --telegram-sync-only --telegram-source-key otl_channel --telegram-poll-seconds 10
+python -m openfang_memory_evolution.app --telegram-sync-only --telegram-source-key otl_channel --telegram-channel https://t.me/AI_otl_Alert --telegram-poll-seconds 10
 ```
 
 Run trading cycles + sync before each cycle:
 
 ```bash
-python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-sync --telegram-source-key otl_channel
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-sync --telegram-source-key otl_channel --telegram-channel AI_otl_Alert
 ```
 
 New SQLite tables:
