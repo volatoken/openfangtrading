@@ -2,13 +2,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import html as html_lib
 import json
 import re
+import ssl
 import time
 from typing import Any
 from urllib import parse, request
 
 from openfang_memory_evolution.MemoryModule.SQLiteMemoryHandler import SQLiteMemoryHandler
+
+
+def normalize_channel_username(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    raw = raw.replace("https://t.me/", "").replace("http://t.me/", "").strip()
+    if raw.startswith("@"):
+        raw = raw[1:]
+    if raw.startswith("s/"):
+        raw = raw[2:]
+    if "/" in raw:
+        raw = raw.split("/", 1)[0]
+    return raw.lower()
 
 
 @dataclass(frozen=True)
@@ -20,6 +38,15 @@ class TelegramSyncConfig:
     symbol: str = "BTC"
     poll_timeout_sec: int = 25
     poll_interval_sec: int = 10
+
+
+@dataclass(frozen=True)
+class TelegramWebSyncConfig:
+    source_key: str = "telegram_web_default"
+    channel_username: str = ""
+    symbol: str = "BTC"
+    poll_interval_sec: int = 15
+    insecure_ssl: bool = False
 
 
 class TelegramBotClient:
@@ -41,6 +68,24 @@ class TelegramBotClient:
         if not payload.get("ok", False):
             return []
         return list(payload.get("result", []))
+
+
+class TelegramWebClient:
+    def fetch_channel_html(self, channel_username: str, insecure_ssl: bool = False) -> str:
+        url = f"https://t.me/s/{channel_username}"
+        req = request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        context = ssl._create_unverified_context() if insecure_ssl else None
+        with request.urlopen(req, timeout=30, context=context) as resp:
+            return resp.read().decode("utf-8", errors="ignore")
 
 
 class TelegramMessageParser:
@@ -95,7 +140,7 @@ class TelegramSyncService:
         config: TelegramSyncConfig,
         sqlite_handler: SQLiteMemoryHandler,
     ) -> None:
-        normalized_username = self._normalize_channel_username(config.channel_username)
+        normalized_username = normalize_channel_username(config.channel_username)
         self.config = TelegramSyncConfig(
             bot_token=config.bot_token,
             source_key=config.source_key,
@@ -129,7 +174,7 @@ class TelegramSyncService:
             chat = message.get("chat", {})
             channel_raw = chat.get("id")
             channel_id = str(channel_raw) if channel_raw is not None else ""
-            chat_username = self._normalize_channel_username(chat.get("username"))
+            chat_username = normalize_channel_username(chat.get("username"))
             if self.config.channel_id and channel_id != self.config.channel_id:
                 continue
             if self.config.channel_username and chat_username != self.config.channel_username:
@@ -156,18 +201,7 @@ class TelegramSyncService:
 
             inserted_messages += 1
             metric = self.parser.parse(text_content, symbol=self.config.symbol)
-            has_metric = any(
-                metric.get(k) is not None
-                for k in [
-                    "btc_index",
-                    "options_24h_vol",
-                    "top_volume_expiration",
-                    "top_volume_strike",
-                    "max_pain",
-                    "poc",
-                ]
-            )
-            if has_metric:
+            if self._has_metric(metric):
                 self.sqlite_handler.insert_telegram_metric(
                     source_key=self.config.source_key,
                     update_id=update_id,
@@ -186,6 +220,19 @@ class TelegramSyncService:
             "last_update_id": max_update_id,
         }
 
+    def _has_metric(self, metric: dict[str, Any]) -> bool:
+        return any(
+            metric.get(k) is not None
+            for k in [
+                "btc_index",
+                "options_24h_vol",
+                "top_volume_expiration",
+                "top_volume_strike",
+                "max_pain",
+                "poc",
+            ]
+        )
+
     def run_forever(self) -> None:
         while True:
             result = self.sync_once()
@@ -198,15 +245,148 @@ class TelegramSyncService:
             )
             time.sleep(self.config.poll_interval_sec)
 
-    def _normalize_channel_username(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        raw = str(value).strip()
-        if not raw:
-            return None
-        raw = raw.replace("https://t.me/", "").replace("http://t.me/", "").strip()
-        if raw.startswith("@"):
-            raw = raw[1:]
-        if "/" in raw:
-            raw = raw.split("/", 1)[0]
-        return raw.lower()
+
+class TelegramWebScrapeSyncService:
+    def __init__(
+        self,
+        config: TelegramWebSyncConfig,
+        sqlite_handler: SQLiteMemoryHandler,
+    ) -> None:
+        channel_username = normalize_channel_username(config.channel_username)
+        if not channel_username:
+            raise ValueError("channel_username is required for web scraping mode.")
+        self.config = TelegramWebSyncConfig(
+            source_key=config.source_key,
+            channel_username=channel_username,
+            symbol=config.symbol,
+            poll_interval_sec=config.poll_interval_sec,
+            insecure_ssl=config.insecure_ssl,
+        )
+        self.sqlite_handler = sqlite_handler
+        self.client = TelegramWebClient()
+        self.parser = TelegramMessageParser()
+
+    def sync_once(self) -> dict[str, int]:
+        html_doc = self.client.fetch_channel_html(
+            self.config.channel_username,
+            insecure_ssl=self.config.insecure_ssl,
+        )
+        posts = self._extract_posts(html_doc)
+        last_update_id = self.sqlite_handler.get_sync_state(self.config.source_key)
+        inserted_messages = 0
+        inserted_metrics = 0
+        max_update_id = last_update_id
+
+        for post in sorted(posts, key=lambda x: x["message_id"]):
+            update_id = int(post["message_id"])
+            if update_id <= last_update_id:
+                continue
+            max_update_id = max(max_update_id, update_id)
+
+            text_content = post["text"]
+            if not text_content:
+                continue
+            was_inserted = self.sqlite_handler.insert_telegram_message(
+                source_key=self.config.source_key,
+                update_id=update_id,
+                channel_id=f"@{self.config.channel_username}",
+                message_id=update_id,
+                posted_at=post["posted_at"],
+                text_content=text_content,
+                raw_json={
+                    "source": "web_scrape",
+                    "channel": self.config.channel_username,
+                    "post_id": post["post_id"],
+                },
+            )
+            if not was_inserted:
+                continue
+
+            inserted_messages += 1
+            metric = self.parser.parse(text_content, symbol=self.config.symbol)
+            if self._has_metric(metric):
+                self.sqlite_handler.insert_telegram_metric(
+                    source_key=self.config.source_key,
+                    update_id=update_id,
+                    message_id=update_id,
+                    metric=metric,
+                )
+                inserted_metrics += 1
+
+        if max_update_id > last_update_id:
+            self.sqlite_handler.upsert_sync_state(self.config.source_key, max_update_id)
+
+        return {
+            "fetched_updates": len(posts),
+            "inserted_messages": inserted_messages,
+            "inserted_metrics": inserted_metrics,
+            "last_update_id": max_update_id,
+        }
+
+    def _extract_posts(self, html_doc: str) -> list[dict[str, Any]]:
+        starts = [m.start() for m in re.finditer(r"<div class=\"tgme_widget_message\b", html_doc)]
+        posts: list[dict[str, Any]] = []
+        for i, start in enumerate(starts):
+            end = starts[i + 1] if i + 1 < len(starts) else len(html_doc)
+            chunk = html_doc[start:end]
+            post_match = re.search(r"data-post=\"([^\"]+)\"", chunk)
+            if not post_match:
+                continue
+            post_id = post_match.group(1)
+            if "/" not in post_id:
+                continue
+            message_id_raw = post_id.split("/", 1)[1]
+            if not message_id_raw.isdigit():
+                continue
+
+            date_match = re.search(r"<time[^>]*datetime=\"([^\"]+)\"", chunk)
+            posted_at = date_match.group(1) if date_match else datetime.now(tz=timezone.utc).isoformat()
+            text_html_match = re.search(
+                r"(?s)<div class=\"tgme_widget_message_text[^>]*>(.*?)</div>",
+                chunk,
+            )
+            text_content = ""
+            if text_html_match:
+                text_content = self._strip_html(text_html_match.group(1))
+
+            posts.append(
+                {
+                    "post_id": post_id,
+                    "message_id": int(message_id_raw),
+                    "posted_at": posted_at,
+                    "text": text_content.strip(),
+                }
+            )
+        return posts
+
+    def _strip_html(self, raw_html: str) -> str:
+        text = re.sub(r"(?i)<br\s*/?>", "\n", raw_html)
+        text = re.sub(r"(?s)<script.*?>.*?</script>", "", text)
+        text = re.sub(r"(?s)<style.*?>.*?</style>", "", text)
+        text = re.sub(r"<[^>]+>", "", text)
+        return html_lib.unescape(text)
+
+    def _has_metric(self, metric: dict[str, Any]) -> bool:
+        return any(
+            metric.get(k) is not None
+            for k in [
+                "btc_index",
+                "options_24h_vol",
+                "top_volume_expiration",
+                "top_volume_strike",
+                "max_pain",
+                "poc",
+            ]
+        )
+
+    def run_forever(self) -> None:
+        while True:
+            result = self.sync_once()
+            print(
+                "[telegram-web-sync] "
+                f"posts={result['fetched_updates']} "
+                f"new_messages={result['inserted_messages']} "
+                f"new_metrics={result['inserted_metrics']} "
+                f"last_message_id={result['last_update_id']}"
+            )
+            time.sleep(self.config.poll_interval_sec)

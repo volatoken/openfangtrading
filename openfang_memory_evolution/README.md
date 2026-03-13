@@ -66,23 +66,32 @@ python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 10
 
 ## Telegram Data Sync (continuous ingestion)
 
-You can continuously ingest Telegram channel posts via Telegram Bot API and store them in SQLite.
+You can continuously ingest Telegram channel posts and store them in SQLite using:
+
+- Bot API mode (requires bot token and channel access), or
+- Public web scraping mode for public channels (`https://t.me/s/<channel>`) with no bot token.
 
 Environment or CLI:
 
-- `TELEGRAM_BOT_TOKEN`
-- optional channel filters: `--telegram-channel-id` or `--telegram-channel`
+- Bot mode: `TELEGRAM_BOT_TOKEN`
+- Public mode: `--telegram-web-sync --telegram-channel https://t.me/s/AI_otl_Alert`
 
-Run sync-only worker:
+Run sync-only worker (public channel, no bot token):
 
 ```bash
-python -m openfang_memory_evolution.app --telegram-sync-only --telegram-source-key otl_channel --telegram-channel https://t.me/AI_otl_Alert --telegram-poll-seconds 10
+python -m openfang_memory_evolution.app --telegram-sync-only --telegram-web-sync --telegram-source-key otl_channel --telegram-channel https://t.me/s/AI_otl_Alert --telegram-poll-seconds 10
 ```
 
-Run trading cycles + sync before each cycle:
+If your network injects a custom TLS certificate, add:
 
 ```bash
-python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-sync --telegram-source-key otl_channel --telegram-channel AI_otl_Alert
+--telegram-web-insecure
+```
+
+Run trading cycles + sync before each cycle (public channel):
+
+```bash
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-web-sync --telegram-source-key otl_channel --telegram-channel AI_otl_Alert
 ```
 
 New SQLite tables:
@@ -213,8 +222,8 @@ Current strategy groups:
 
 Note:
 
-- Seeds are inserted only when strategy memory is empty.
-- If you want to reload new seeds, clear local memory files under `openfang_memory_evolution/data/`.
+- Seeds are upserted on startup, so new strategy keys are added even on existing DB.
+- To hard reset all strategy memory, clear local files under `openfang_memory_evolution/data/`.
 
 ## Production Extension Points
 
