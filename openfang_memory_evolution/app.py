@@ -26,6 +26,7 @@ from openfang_memory_evolution.DecisionMakingModule.TradeLogic import TradeLogic
 from openfang_memory_evolution.DecisionMakingModule.TradeDecisionMaker import TradeDecisionMaker
 from openfang_memory_evolution.ExecutionModule.APIHandler import APIHandler
 from openfang_memory_evolution.ExecutionModule.TradeExecutor import TradeExecutor
+from openfang_memory_evolution.StrategyModule.StrategyCatalog import get_default_strategy_seeds
 
 
 class OpenFangEngine:
@@ -84,27 +85,14 @@ class OpenFangEngine:
         if active:
             return
 
-        seeds = [
-            (
-                "rsi_oversold_buy",
-                "Buy mean-reversion when RSI indicates oversold and momentum stabilizes.",
-            ),
-            (
-                "rsi_overbought_sell",
-                "Sell/short when RSI is overbought and MACD loses momentum.",
-            ),
-            (
-                "trend_follow_bull",
-                "Buy breakout in bull trend with confirmation from positive MACD histogram.",
-            ),
-            (
-                "range_hold",
-                "Hold in choppy sideway regime when signals conflict and risk is high.",
-            ),
-        ]
-        for key, text in seeds:
-            emb = self._text_embedding(text)
-            self.memory_updater.upsert_strategy(key, text, emb, summary="bootstrap")
+        for seed in get_default_strategy_seeds():
+            emb = self._text_embedding(seed.text)
+            self.memory_updater.upsert_strategy(
+                seed.key,
+                seed.text,
+                emb,
+                summary=seed.summary,
+            )
         self.vector_index.save()
 
     def _build_market_features(self, symbol: str) -> tuple[dict[str, float | str], list[float]]:

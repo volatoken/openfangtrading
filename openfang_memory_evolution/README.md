@@ -130,6 +130,37 @@ Current implementation is cycle-based, not wall-clock based:
 
 So you do not need to wait 24h for learning to start.
 
+## Strategy Set (Theory-Based Seeds)
+
+Default strategy seeds are now loaded from:
+
+- `StrategyModule/StrategyCatalog.py`
+
+Current strategy groups:
+
+- 0DTE ATM breakout continuation:
+  - `otl_0dte_atm_breakout_buy`
+  - `otl_0dte_atm_breakout_sell`
+- 1DTE fakeout reversal:
+  - `otl_1dte_fakeout_short`
+  - `otl_1dte_fakeout_long`
+- Max Pain regime flip and magnet:
+  - `otf_maxpain_flip_bull`
+  - `otf_maxpain_flip_bear`
+  - `otf_maxpain_magnet_reversion`
+- Sideway and value-area rotation:
+  - `otl_sideway_insidebar_rotation`
+  - `otl_sideway_val_to_vah_buy`
+  - `otl_sideway_vah_to_val_sell`
+- Higher-timeframe bias anchors:
+  - `otl_weekly_above_mp_poc_bull`
+  - `otl_monthly_70000_pivot`
+
+Note:
+
+- Seeds are inserted only when strategy memory is empty.
+- If you want to reload new seeds, clear local memory files under `openfang_memory_evolution/data/`.
+
 ## Production Extension Points
 
 - Replace `MarketDataModule.DataCollector` with real Binance/Kraken feeds
