@@ -26,6 +26,7 @@ from openfang_memory_evolution.DecisionMakingModule.TradeLogic import TradeLogic
 from openfang_memory_evolution.DecisionMakingModule.TradeDecisionMaker import TradeDecisionMaker
 from openfang_memory_evolution.ExecutionModule.APIHandler import APIHandler
 from openfang_memory_evolution.ExecutionModule.TradeExecutor import TradeExecutor
+from openfang_memory_evolution.OptionAnalyticsModule.OptionFlowAnalyzer import OptionFlowAnalyzer
 from openfang_memory_evolution.StrategyModule.StrategyCatalog import get_default_strategy_seeds
 
 
@@ -59,6 +60,7 @@ class OpenFangEngine:
         self.memory_summaries = MemorySummaries(self.sqlite_handler)
 
         self.llm_manager = LLMManager()
+        self.option_flow_analyzer = OptionFlowAnalyzer(self.sqlite_handler)
         self.ranking_engine = SemanticRankingEngine(self.llm_manager)
         self.strategy_ranker = StrategyRanker(
             memory_updater=self.memory_updater,
@@ -95,11 +97,14 @@ class OpenFangEngine:
             )
         self.vector_index.save()
 
-    def _build_market_features(self, symbol: str) -> tuple[dict[str, float | str], list[float]]:
+    def _build_market_features(
+        self, symbol: str
+    ) -> tuple[dict[str, float | str], list[float], str, list[Any]]:
         snapshot = self.data_collector.collect(symbol=symbol)
         processed = self.data_processor.process(snapshot)
         transformed = self.data_transformer.transform(processed)
         indicators = self.indicator_calculator.calculate(processed)
+        option_signal = self.option_flow_analyzer.analyze(symbol=symbol, bubbles=snapshot.option_bubbles)
 
         raw_features = {
             "rsi": indicators.rsi,
@@ -118,11 +123,18 @@ class OpenFangEngine:
             **raw_features,
             "symbol": transformed.symbol,
             "market_regime": transformed.market_regime,
+            "dominant_timeframe": option_signal.dominant_timeframe,
+            "dominant_expiry": option_signal.dominant_expiry,
+            "anomaly_timeframe": option_signal.anomaly_timeframe,
+            "anomaly_score": option_signal.anomaly_score,
+            "premium_0dte": option_signal.timeframe_premium.get("0DTE", 0.0),
+            "premium_weekly": option_signal.timeframe_premium.get("weekly", 0.0),
+            "premium_monthly": option_signal.timeframe_premium.get("monthly", 0.0),
         }
-        return market_context, vector
+        return market_context, vector, snapshot.timestamp.isoformat(), snapshot.option_bubbles
 
     def run_cycle(self, symbol: str) -> dict[str, Any]:
-        market_context, market_vector = self._build_market_features(symbol)
+        market_context, market_vector, snapshot_ts, option_bubbles = self._build_market_features(symbol)
         ranked = self.strategy_ranker.rank(market_vector, market_context)
         decision = self.decision_maker.decide(symbol, market_context, ranked)
         execution = self.trade_executor.execute(symbol, decision.action, market_context)
@@ -136,6 +148,16 @@ class OpenFangEngine:
             risk=decision.risk,
             reasoning=decision.reasoning,
             market_context=market_context,
+        )
+
+        self.sqlite_handler.insert_option_bubble_history(
+            symbol=symbol,
+            snapshot_ts=snapshot_ts,
+            bubbles=option_bubbles,
+            dominant_timeframe=str(market_context.get("dominant_timeframe", "")),
+            dominant_expiry=str(market_context.get("dominant_expiry", "")),
+            anomaly_timeframe=str(market_context.get("anomaly_timeframe", "")),
+            anomaly_score=float(market_context.get("anomaly_score", 1.0)),
         )
 
         if decision.strategy_id is not None and decision.action != "HOLD":
@@ -165,6 +187,10 @@ class OpenFangEngine:
             "risk": decision.risk,
             "market_regime": market_context["market_regime"],
             "rsi": market_context["rsi"],
+            "dominant_timeframe": market_context["dominant_timeframe"],
+            "dominant_expiry": market_context["dominant_expiry"],
+            "anomaly_timeframe": market_context["anomaly_timeframe"],
+            "anomaly_score": market_context["anomaly_score"],
             "maintenance": maintenance,
         }
 

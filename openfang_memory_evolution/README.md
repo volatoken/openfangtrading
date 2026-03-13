@@ -130,6 +130,25 @@ Current implementation is cycle-based, not wall-clock based:
 
 So you do not need to wait 24h for learning to start.
 
+### 6) Dominant-expiration and anomaly-first logic
+
+- Entry trigger is not fixed to `0DTE`.
+- The engine detects which expiration/timeframe has the largest premium flow first.
+- If abnormal bubble bursts appear in any timeframe (0DTE/weekly/monthly), that timeframe can become the trigger context.
+- Trade confirmation is then checked against Max Pain/POC and price behavior.
+
+### 7) Bubble history storage for comparison
+
+The system persists option bubble metrics to SQLite each cycle:
+
+- `option_bubble_history`:
+  - raw bubbles per event (`timeframe`, `expiry`, `strike`, `side`, `premium_usd`, `bubble_size`)
+- `option_flow_snapshots`:
+  - aggregated flow by timeframe/expiry per snapshot
+  - includes `dominant_timeframe`, `dominant_expiry`, `anomaly_timeframe`, `anomaly_score`
+
+This history is used to compare current flow versus recent baseline and compute anomaly scores.
+
 ## Strategy Set (Theory-Based Seeds)
 
 Default strategy seeds are now loaded from:
@@ -138,9 +157,12 @@ Default strategy seeds are now loaded from:
 
 Current strategy groups:
 
-- 0DTE ATM breakout continuation:
-  - `otl_0dte_atm_breakout_buy`
-  - `otl_0dte_atm_breakout_sell`
+- Any-timeframe anomaly breakout:
+  - `otl_anytime_anomaly_breakout_buy`
+  - `otl_anytime_anomaly_breakout_sell`
+- Dominant-expiration flow first:
+  - `otl_dominant_expiration_flow_buy`
+  - `otl_dominant_expiration_flow_sell`
 - 1DTE fakeout reversal:
   - `otl_1dte_fakeout_short`
   - `otl_1dte_fakeout_long`

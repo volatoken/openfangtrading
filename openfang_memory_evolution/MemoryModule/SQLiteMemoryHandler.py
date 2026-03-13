@@ -59,6 +59,36 @@ class SQLiteMemoryHandler:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(strategy_id) REFERENCES strategies(id)
             );
+
+            CREATE TABLE IF NOT EXISTS option_bubble_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                side TEXT NOT NULL,
+                premium_usd REAL NOT NULL,
+                contracts REAL NOT NULL,
+                bubble_size REAL NOT NULL,
+                snapshot_ts TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS option_flow_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                total_premium REAL NOT NULL,
+                bubble_count INTEGER NOT NULL,
+                max_bubble_size REAL NOT NULL,
+                dominant_timeframe TEXT NOT NULL,
+                dominant_expiry TEXT NOT NULL,
+                anomaly_timeframe TEXT NOT NULL,
+                anomaly_score REAL NOT NULL,
+                snapshot_ts TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         self._conn.commit()
@@ -249,6 +279,137 @@ class SQLiteMemoryHandler:
             ORDER BY weight DESC, wins DESC
             """
         ).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_option_bubble_history(
+        self,
+        symbol: str,
+        snapshot_ts: str,
+        bubbles: list[Any],
+        dominant_timeframe: str,
+        dominant_expiry: str,
+        anomaly_timeframe: str,
+        anomaly_score: float,
+    ) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        bubble_rows: list[tuple[Any, ...]] = []
+        aggregates: dict[tuple[str, str], dict[str, float]] = {}
+
+        for bubble in bubbles:
+            bubble_rows.append(
+                (
+                    symbol,
+                    str(getattr(bubble, "timeframe")),
+                    str(getattr(bubble, "expiry")),
+                    float(getattr(bubble, "strike")),
+                    str(getattr(bubble, "side")),
+                    float(getattr(bubble, "premium_usd")),
+                    float(getattr(bubble, "contracts")),
+                    float(getattr(bubble, "bubble_size")),
+                    snapshot_ts,
+                    now,
+                )
+            )
+            key = (str(getattr(bubble, "timeframe")), str(getattr(bubble, "expiry")))
+            if key not in aggregates:
+                aggregates[key] = {"total_premium": 0.0, "bubble_count": 0.0, "max_bubble_size": 0.0}
+            aggregates[key]["total_premium"] += float(getattr(bubble, "premium_usd"))
+            aggregates[key]["bubble_count"] += 1.0
+            aggregates[key]["max_bubble_size"] = max(
+                aggregates[key]["max_bubble_size"],
+                float(getattr(bubble, "bubble_size")),
+            )
+
+        if bubble_rows:
+            self._conn.executemany(
+                """
+                INSERT INTO option_bubble_history (
+                    symbol, timeframe, expiry, strike, side, premium_usd, contracts, bubble_size, snapshot_ts, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                bubble_rows,
+            )
+
+        snapshot_rows: list[tuple[Any, ...]] = []
+        for (timeframe, expiry), row in aggregates.items():
+            snapshot_rows.append(
+                (
+                    symbol,
+                    timeframe,
+                    expiry,
+                    row["total_premium"],
+                    int(row["bubble_count"]),
+                    row["max_bubble_size"],
+                    dominant_timeframe,
+                    dominant_expiry,
+                    anomaly_timeframe,
+                    anomaly_score,
+                    snapshot_ts,
+                    now,
+                )
+            )
+
+        if snapshot_rows:
+            self._conn.executemany(
+                """
+                INSERT INTO option_flow_snapshots (
+                    symbol, timeframe, expiry, total_premium, bubble_count, max_bubble_size,
+                    dominant_timeframe, dominant_expiry, anomaly_timeframe, anomaly_score,
+                    snapshot_ts, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                snapshot_rows,
+            )
+        self._conn.commit()
+
+    def fetch_recent_flow_totals(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 40,
+    ) -> list[float]:
+        rows = self._conn.execute(
+            """
+            SELECT total_premium
+            FROM option_flow_snapshots
+            WHERE symbol = ? AND timeframe = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (symbol, timeframe, limit),
+        ).fetchall()
+        return [float(r["total_premium"]) for r in rows]
+
+    def fetch_recent_option_bubbles(
+        self,
+        symbol: str,
+        timeframe: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        if timeframe:
+            rows = self._conn.execute(
+                """
+                SELECT symbol, timeframe, expiry, strike, side, premium_usd, contracts, bubble_size, snapshot_ts
+                FROM option_bubble_history
+                WHERE symbol = ? AND timeframe = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (symbol, timeframe, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT symbol, timeframe, expiry, strike, side, premium_usd, contracts, bubble_size, snapshot_ts
+                FROM option_bubble_history
+                WHERE symbol = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (symbol, limit),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def _row_to_strategy(self, row: sqlite3.Row) -> StrategyRecord:

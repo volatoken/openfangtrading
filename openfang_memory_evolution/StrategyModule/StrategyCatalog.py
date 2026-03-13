@@ -16,20 +16,36 @@ def get_default_strategy_seeds() -> list[StrategySeed]:
     """
     return [
         StrategySeed(
-            key="otl_0dte_atm_breakout_buy",
+            key="otl_anytime_anomaly_breakout_buy",
             text=(
-                "BUY breakout when 0DTE ATM option volume bursts, price breaks above key "
+                "BUY breakout when anomaly bubbles surge in any timeframe, price breaks key "
                 "resistance, and retest holds above Max Pain/POC zone."
             ),
-            summary="0DTE ATM burst breakout long continuation",
+            summary="Any-timeframe anomaly breakout long continuation",
         ),
         StrategySeed(
-            key="otl_0dte_atm_breakout_sell",
+            key="otl_anytime_anomaly_breakout_sell",
             text=(
-                "SELL breakdown when 0DTE ATM put-side flow surges, price loses key support, "
+                "SELL breakdown when anomaly put-side flow surges in any timeframe, price loses key support, "
                 "and retest fails below Max Pain/POC zone."
             ),
-            summary="0DTE ATM burst breakdown short continuation",
+            summary="Any-timeframe anomaly breakdown short continuation",
+        ),
+        StrategySeed(
+            key="otl_dominant_expiration_flow_buy",
+            text=(
+                "BUY when dominant expiration contract carries the largest premium flow and "
+                "shorter-term price action confirms its bullish direction."
+            ),
+            summary="Follow bullish flow from dominant expiration first",
+        ),
+        StrategySeed(
+            key="otl_dominant_expiration_flow_sell",
+            text=(
+                "SELL when dominant expiration contract carries the largest premium flow and "
+                "shorter-term price action confirms bearish direction."
+            ),
+            summary="Follow bearish flow from dominant expiration first",
         ),
         StrategySeed(
             key="otl_1dte_fakeout_short",
