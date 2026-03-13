@@ -83,10 +83,6 @@ class OpenFangEngine:
         return [x / norm for x in vec]
 
     def _bootstrap_strategies(self) -> None:
-        active = self.sqlite_handler.fetch_active_strategies(limit=1)
-        if active:
-            return
-
         for seed in get_default_strategy_seeds():
             emb = self._text_embedding(seed.text)
             self.memory_updater.upsert_strategy(
@@ -104,7 +100,11 @@ class OpenFangEngine:
         processed = self.data_processor.process(snapshot)
         transformed = self.data_transformer.transform(processed)
         indicators = self.indicator_calculator.calculate(processed)
-        option_signal = self.option_flow_analyzer.analyze(symbol=symbol, bubbles=snapshot.option_bubbles)
+        option_signal = self.option_flow_analyzer.analyze(
+            symbol=symbol,
+            spot_price=transformed.latest_price,
+            bubbles=snapshot.option_bubbles,
+        )
 
         raw_features = {
             "rsi": indicators.rsi,
@@ -130,6 +130,14 @@ class OpenFangEngine:
             "premium_0dte": option_signal.timeframe_premium.get("0DTE", 0.0),
             "premium_weekly": option_signal.timeframe_premium.get("weekly", 0.0),
             "premium_monthly": option_signal.timeframe_premium.get("monthly", 0.0),
+            "dominant_max_pain": option_signal.dominant_max_pain,
+            "max_pain_0dte": option_signal.max_pain_by_timeframe.get("0DTE", option_signal.dominant_max_pain),
+            "max_pain_weekly": option_signal.max_pain_by_timeframe.get("weekly", option_signal.dominant_max_pain),
+            "max_pain_monthly": option_signal.max_pain_by_timeframe.get("monthly", option_signal.dominant_max_pain),
+            "max_pain_consensus": option_signal.mp_consensus,
+            "mp_distance_pct": option_signal.mp_distance_pct,
+            "mp_reversion_direction": option_signal.mp_reversion_direction,
+            "mp_divergence_score": option_signal.mp_divergence_score,
         }
         return market_context, vector, snapshot.timestamp.isoformat(), snapshot.option_bubbles
 
@@ -191,6 +199,10 @@ class OpenFangEngine:
             "dominant_expiry": market_context["dominant_expiry"],
             "anomaly_timeframe": market_context["anomaly_timeframe"],
             "anomaly_score": market_context["anomaly_score"],
+            "dominant_max_pain": market_context["dominant_max_pain"],
+            "mp_distance_pct": market_context["mp_distance_pct"],
+            "mp_reversion_direction": market_context["mp_reversion_direction"],
+            "mp_divergence_score": market_context["mp_divergence_score"],
             "maintenance": maintenance,
         }
 

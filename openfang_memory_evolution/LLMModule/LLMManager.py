@@ -18,6 +18,8 @@ class LLMManager:
         dominant_timeframe = str(market_context.get("dominant_timeframe", "")).lower()
         anomaly_timeframe = str(market_context.get("anomaly_timeframe", "")).lower()
         anomaly_score = float(market_context.get("anomaly_score", 1.0))
+        mp_divergence_score = float(market_context.get("mp_divergence_score", 0.0))
+        mp_reversion_direction = str(market_context.get("mp_reversion_direction", "none")).lower()
         confidence = 0.5
         risk = 0.5
 
@@ -56,11 +58,41 @@ class LLMManager:
         if "breakout" in text and anomaly_score < 1.1:
             confidence -= 0.06
 
+        is_buy = "buy" in text or "long" in text
+        is_sell = "sell" in text or "short" in text
+        is_reversion = "reversion" in text or "mean-reversion" in text or "mp divergence" in text
+        if is_reversion:
+            if mp_divergence_score >= 0.45:
+                confidence += 0.18
+                risk -= 0.08
+            elif mp_divergence_score <= 0.2:
+                confidence -= 0.08
+
+            if mp_reversion_direction == "buy":
+                if is_buy:
+                    confidence += 0.12
+                    risk -= 0.05
+                elif is_sell:
+                    confidence -= 0.12
+                    risk += 0.06
+            if mp_reversion_direction == "sell":
+                if is_sell:
+                    confidence += 0.12
+                    risk -= 0.05
+                elif is_buy:
+                    confidence -= 0.12
+                    risk += 0.06
+
+        if "breakout" in text and mp_divergence_score > 0.6:
+            confidence -= 0.1
+            risk += 0.08
+
         confidence = min(max(confidence, 0.05), 0.99)
         risk = min(max(risk, 0.01), 0.99)
         reason = (
             f"regime={regime}, rsi={rsi:.1f}, dominant_tf={dominant_timeframe}, "
             f"anomaly_tf={anomaly_timeframe}, anomaly_score={anomaly_score:.2f}, "
+            f"mp_div={mp_divergence_score:.2f}, mp_dir={mp_reversion_direction}, "
             f"text_match={text[:80]}"
         )
         return {"confidence": confidence, "risk": risk, "reason": reason}

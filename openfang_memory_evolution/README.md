@@ -136,6 +136,9 @@ So you do not need to wait 24h for learning to start.
 - The engine detects which expiration/timeframe has the largest premium flow first.
 - If abnormal bubble bursts appear in any timeframe (0DTE/weekly/monthly), that timeframe can become the trigger context.
 - Trade confirmation is then checked against Max Pain/POC and price behavior.
+- MP divergence reversion is scored directly:
+  - if price is far from dominant Max Pain / MP cluster, reversion strategies are boosted
+  - if price is near Max Pain, reversion edge is reduced
 
 ### 7) Bubble history storage for comparison
 
@@ -170,6 +173,9 @@ Current strategy groups:
   - `otf_maxpain_flip_bull`
   - `otf_maxpain_flip_bear`
   - `otf_maxpain_magnet_reversion`
+- MP divergence reversion:
+  - `otl_mp_divergence_reversion_sell`
+  - `otl_mp_divergence_reversion_buy`
 - Sideway and value-area rotation:
   - `otl_sideway_insidebar_rotation`
   - `otl_sideway_val_to_vah_buy`

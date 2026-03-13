@@ -88,6 +88,22 @@ def get_default_strategy_seeds() -> list[StrategySeed]:
             summary="Expiry magnet reversion toward Max Pain",
         ),
         StrategySeed(
+            key="otl_mp_divergence_reversion_sell",
+            text=(
+                "SELL MP divergence reversion when price stretches far above dominant Max Pain "
+                "or agreed Max Pain cluster and momentum fails to hold breakout."
+            ),
+            summary="Revert from overextension above dominant Max Pain",
+        ),
+        StrategySeed(
+            key="otl_mp_divergence_reversion_buy",
+            text=(
+                "BUY MP divergence reversion when price stretches far below dominant Max Pain "
+                "or agreed Max Pain cluster and downside extension is absorbed."
+            ),
+            summary="Revert from overextension below dominant Max Pain",
+        ),
+        StrategySeed(
             key="otl_sideway_insidebar_rotation",
             text=(
                 "Sideway rotation inside Inside Bar range: BUY near lower boundary and SELL near "
