@@ -70,6 +70,7 @@ You can continuously ingest Telegram channel posts and store them in SQLite usin
 
 - Bot API mode (requires bot token and channel access), or
 - Public web scraping mode for public channels (`https://t.me/s/<channel>`) with no bot token.
+- Telegram user session mode via Telethon (uses your own Telegram account, no channel admin needed).
 
 Environment or CLI:
 
@@ -92,6 +93,18 @@ Run trading cycles + sync before each cycle (public channel):
 
 ```bash
 python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-web-sync --telegram-source-key otl_channel --telegram-channel AI_otl_Alert
+```
+
+Run sync-only worker with Telegram user session (Telethon):
+
+```bash
+python -m openfang_memory_evolution.app --telegram-user-sync-only --telegram-source-key otl_channel_user --telegram-channel AI_otl_Alert --telegram-api-id <API_ID> --telegram-api-hash <API_HASH> --telegram-phone <PHONE>
+```
+
+Run trading + user-session sync:
+
+```bash
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --telegram-user-sync --telegram-source-key otl_channel_user --telegram-channel AI_otl_Alert --telegram-api-id <API_ID> --telegram-api-hash <API_HASH>
 ```
 
 New SQLite tables:

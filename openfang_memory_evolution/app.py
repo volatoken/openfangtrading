@@ -36,6 +36,10 @@ from openfang_memory_evolution.TelegramModule.TelegramSyncService import (
     TelegramWebScrapeSyncService,
     TelegramWebSyncConfig,
 )
+from openfang_memory_evolution.TelegramUserModule.TelegramUserSyncService import (
+    TelegramUserSyncConfig,
+    TelegramUserSyncService,
+)
 
 
 class OpenFangEngine:
@@ -246,6 +250,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use public web scraping mode for channel (https://t.me/s/<channel>)",
     )
+    parser.add_argument("--telegram-user-sync", action="store_true", help="Use Telegram user session (Telethon) and sync before each cycle")
+    parser.add_argument("--telegram-user-sync-only", action="store_true", help="Run only Telegram user session sync worker")
+    parser.add_argument("--telegram-api-id", type=int, default=0, help="Telegram API ID for Telethon user mode")
+    parser.add_argument("--telegram-api-hash", default="", help="Telegram API hash for Telethon user mode")
+    parser.add_argument("--telegram-phone", default="", help="Phone number for first Telethon login (example +849...)")
+    parser.add_argument(
+        "--telegram-user-session",
+        default="",
+        help="Path prefix for Telethon session file (default: openfang_memory_evolution/data/telethon_user)",
+    )
+    parser.add_argument("--telegram-user-limit", type=int, default=500, help="Max messages per sync call in Telethon mode")
     parser.add_argument("--telegram-bot-token", default="", help="Telegram bot token")
     parser.add_argument("--telegram-channel-id", default="", help="Telegram channel id filter")
     parser.add_argument(
@@ -275,16 +290,53 @@ def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parent
     settings = load_settings(root)
-    should_sync_tg = args.telegram_sync or args.telegram_sync_only or args.telegram_web_sync
+    use_user_sync = bool(args.telegram_user_sync or args.telegram_user_sync_only)
+    should_sync_tg = (
+        args.telegram_sync
+        or args.telegram_sync_only
+        or args.telegram_web_sync
+        or use_user_sync
+    )
     use_web_sync = bool(args.telegram_web_sync)
+    use_bot_sync = bool(args.telegram_sync or args.telegram_sync_only)
     tg_token = args.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
     if should_sync_tg and not use_web_sync and not tg_token and args.telegram_channel:
         # Auto-fallback to public web scraping when token is unavailable but channel is provided.
-        use_web_sync = True
+        if not use_user_sync and use_bot_sync:
+            use_web_sync = True
 
     tg_config: TelegramSyncConfig | None = None
     tg_web_config: TelegramWebSyncConfig | None = None
-    if should_sync_tg and use_web_sync:
+    tg_user_config: TelegramUserSyncConfig | None = None
+
+    enabled_modes = sum(
+        [
+            1 if use_user_sync else 0,
+            1 if use_web_sync else 0,
+            1 if (use_bot_sync and not use_web_sync and not use_user_sync) else 0,
+        ]
+    )
+    if enabled_modes > 1:
+        raise SystemExit("Choose only one Telegram sync mode: bot OR web OR user-session.")
+
+    if should_sync_tg and use_user_sync:
+        if not args.telegram_channel:
+            raise SystemExit("Telegram user session mode requires --telegram-channel.")
+        if not args.telegram_api_id or not args.telegram_api_hash:
+            raise SystemExit("Telegram user session mode requires --telegram-api-id and --telegram-api-hash.")
+        session_path = args.telegram_user_session or str(settings.base_dir / "data" / "telethon_user")
+        tg_user_config = TelegramUserSyncConfig(
+            api_id=int(args.telegram_api_id),
+            api_hash=args.telegram_api_hash,
+            source_key=args.telegram_source_key,
+            channel_username=args.telegram_channel,
+            symbol=args.telegram_symbol,
+            session_path=session_path,
+            phone=args.telegram_phone,
+            poll_interval_sec=max(1, int(args.telegram_poll_seconds)),
+            limit_per_sync=max(1, int(args.telegram_user_limit)),
+        )
+    elif should_sync_tg and use_web_sync:
         if not args.telegram_channel:
             raise SystemExit("Web scraping mode requires --telegram-channel (username or t.me link).")
         tg_web_config = TelegramWebSyncConfig(
@@ -307,13 +359,14 @@ def main() -> None:
             poll_interval_sec=max(1, int(args.telegram_poll_seconds)),
         )
 
-    if args.telegram_sync_only:
+    if args.telegram_sync_only or args.telegram_user_sync_only:
         tg_handler = SQLiteMemoryHandler(settings.sqlite_path)
-        sync_service = (
-            TelegramWebScrapeSyncService(config=tg_web_config, sqlite_handler=tg_handler)
-            if use_web_sync
-            else TelegramSyncService(config=tg_config, sqlite_handler=tg_handler)
-        )
+        if use_user_sync:
+            sync_service = TelegramUserSyncService(config=tg_user_config, sqlite_handler=tg_handler)
+        elif use_web_sync:
+            sync_service = TelegramWebScrapeSyncService(config=tg_web_config, sqlite_handler=tg_handler)
+        else:
+            sync_service = TelegramSyncService(config=tg_config, sqlite_handler=tg_handler)
         iterations = int(args.telegram_sync_iterations)
         count = 0
         try:
@@ -330,15 +383,16 @@ def main() -> None:
 
     engine = OpenFangEngine(settings, telegram_source_key=(args.telegram_source_key if should_sync_tg else None))
     sync_service: Any = None
-    if (args.telegram_sync or args.telegram_web_sync) and should_sync_tg:
-        sync_service = (
-            TelegramWebScrapeSyncService(config=tg_web_config, sqlite_handler=engine.sqlite_handler)
-            if use_web_sync
-            else TelegramSyncService(config=tg_config, sqlite_handler=engine.sqlite_handler)
-        )
+    if (args.telegram_sync or args.telegram_web_sync or args.telegram_user_sync) and should_sync_tg:
+        if use_user_sync:
+            sync_service = TelegramUserSyncService(config=tg_user_config, sqlite_handler=engine.sqlite_handler)
+        elif use_web_sync:
+            sync_service = TelegramWebScrapeSyncService(config=tg_web_config, sqlite_handler=engine.sqlite_handler)
+        else:
+            sync_service = TelegramSyncService(config=tg_config, sqlite_handler=engine.sqlite_handler)
     try:
         for i in range(args.cycles):
-            if sync_service and (args.telegram_sync or args.telegram_web_sync):
+            if sync_service and (args.telegram_sync or args.telegram_web_sync or args.telegram_user_sync):
                 result = sync_service.sync_once()
                 print(f"[telegram-sync] {result}")
             output = engine.run_cycle(args.symbol)
