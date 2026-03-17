@@ -1,0 +1,753 @@
+version: "1.0.0"
+generated_at_utc: "2026-03-14T00:00:00Z"
+project: "openfang_memory_evolution"
+notes:
+  - "This file is a 1:1 implementation mapping from product panel spec to data pipeline config."
+  - "All derived metrics flagged as inferred are computed internally (not returned directly by Binance)."
+
+global:
+  timezone: "UTC"
+  base_asset: "BTC"
+  base_underlying: "BTCUSDT"
+  ui_refresh_ms: 1000
+  db_rollup_interval_sec: 60
+  rest_reconcile_interval_sec: 60
+  big_trade_threshold_usdt: 100000
+  default_lookback_window:
+    intraday: "24h"
+    panel: "1m_buckets"
+  expiry_groups:
+    odte:
+      rule: "expiry_date == today_utc"
+    d1:
+      rule: "expiry_date == today_utc + 1 day"
+    weekly:
+      rule: "next_weekly_expiry"
+    monthly:
+      rule: "dominant_monthly_expiry_by_premium_or_oi"
+
+api_catalog:
+  spot_rest:
+    base_url: "https://api.binance.com"
+    endpoints:
+      ticker_24h: "/api/v3/ticker/24hr"
+      agg_trades: "/api/v3/aggTrades"
+      klines: "/api/v3/klines"
+      depth: "/api/v3/depth"
+  spot_ws:
+    base_url: "wss://stream.binance.com:9443/ws"
+    streams:
+      agg_trade: "<symbol>@aggTrade"
+      ticker_24h: "<symbol>@ticker"
+      mini_ticker: "<symbol>@miniTicker"
+      kline_1m: "<symbol>@kline_1m"
+      book_ticker: "<symbol>@bookTicker"
+  um_rest:
+    base_url: "https://fapi.binance.com"
+    endpoints:
+      premium_index: "/fapi/v1/premiumIndex"
+      ticker_24h: "/fapi/v1/ticker/24hr"
+      open_interest: "/fapi/v1/openInterest"
+      open_interest_hist: "/futures/data/openInterestHist"
+      funding_rate: "/fapi/v1/fundingRate"
+      funding_info: "/fapi/v1/fundingInfo"
+  um_ws:
+    base_url: "wss://fstream.binance.com/ws"
+    streams:
+      mark_price_1s: "<symbol>@markPrice@1s"
+      ticker_24h: "<symbol>@ticker"
+      agg_trade: "<symbol>@aggTrade"
+      book_ticker: "<symbol>@bookTicker"
+  cm_rest:
+    base_url: "https://dapi.binance.com"
+    endpoints:
+      premium_index: "/dapi/v1/premiumIndex"
+      ticker_24h: "/dapi/v1/ticker/24hr"
+      open_interest: "/dapi/v1/openInterest"
+      funding_rate: "/dapi/v1/fundingRate"
+      taker_buy_sell_vol: "/futures/data/takerBuySellVol"
+  options_rest:
+    base_url: "https://eapi.binance.com"
+    endpoints:
+      exchange_info: "/eapi/v1/exchangeInfo"
+      index_price: "/eapi/v1/index"
+      ticker_24h: "/eapi/v1/ticker"
+      open_interest: "/eapi/v1/openInterest"
+      mark: "/eapi/v1/mark"
+      trades: "/eapi/v1/trades"
+      block_trades: "/eapi/v1/blockTrades"
+      klines: "/eapi/v1/klines"
+      depth: "/eapi/v1/depth"
+  options_ws:
+    base_url: "wss://nbstream.binance.com/eoptions/ws"
+    streams:
+      trade: "<underlying>@optionTrade"
+      mark_price: "<underlying>@optionMarkPrice"
+      ticker_24h_expiry: "<underlying>@optionTicker@<expiry>"
+      open_interest_expiry: "<underlying>@optionOpenInterest@<expiry>"
+      index_all: "!index@arr"
+      book_ticker: "<symbol>@bookTicker"
+
+db_tables:
+  raw:
+    - "option_trade_events"
+    - "option_mark_snapshots"
+    - "option_oi_snapshots"
+    - "option_ticker_24h_snapshots"
+    - "futures_snapshots"
+    - "spot_snapshots"
+  derived:
+    - "derived_strike_metrics_1m"
+    - "derived_expiry_metrics_1m"
+    - "derived_maxpain_poc_1m"
+    - "derived_iv_surface_1m"
+    - "derived_signal_snapshots_1m"
+
+datasets:
+  options_symbols:
+    source:
+      rest:
+        service: "options_rest"
+        endpoint: "exchange_info"
+    schedule:
+      refresh_sec: 300
+    fields:
+      - "symbol"
+      - "expiryDate"
+      - "strikePrice"
+      - "side"
+      - "unit"
+      - "quoteAsset"
+    sink:
+      table: "dim_option_symbols"
+      mode: "upsert"
+
+  options_trade_flow:
+    source:
+      ws:
+        service: "options_ws"
+        stream: "trade"
+      rest_backfill:
+        service: "options_rest"
+        endpoint: "trades"
+        interval_sec: 60
+    normalize:
+      symbol_parser: "BTC-YYMMDD-STRIKE-C|P"
+      fields:
+        side_map:
+          buy: ["BUY", 1]
+          sell: ["SELL", -1]
+        premium_usdt: "abs(price * qty)"
+        trade_type: "X"
+    sink:
+      table: "option_trade_events"
+      mode: "append"
+
+  options_mark_surface:
+    source:
+      ws:
+        service: "options_ws"
+        stream: "mark_price"
+      rest_backfill:
+        service: "options_rest"
+        endpoint: "mark"
+        interval_sec: 60
+    fields:
+      - "symbol"
+      - "markPrice"
+      - "bidIV"
+      - "askIV"
+      - "markIV"
+      - "delta"
+      - "gamma"
+      - "theta"
+      - "vega"
+    sink:
+      table: "option_mark_snapshots"
+      mode: "append"
+
+  options_oi:
+    source:
+      ws:
+        service: "options_ws"
+        stream: "open_interest_expiry"
+      rest_backfill:
+        service: "options_rest"
+        endpoint: "open_interest"
+        interval_sec: 60
+    sink:
+      table: "option_oi_snapshots"
+      mode: "append"
+
+  options_ticker_24h:
+    source:
+      ws:
+        service: "options_ws"
+        stream: "ticker_24h_expiry"
+      rest_backfill:
+        service: "options_rest"
+        endpoint: "ticker_24h"
+        interval_sec: 60
+    sink:
+      table: "option_ticker_24h_snapshots"
+      mode: "append"
+
+  options_index:
+    source:
+      ws:
+        service: "options_ws"
+        stream: "index_all"
+      rest_backfill:
+        service: "options_rest"
+        endpoint: "index_price"
+        interval_sec: 10
+    sink:
+      table: "option_index_snapshots"
+      mode: "append"
+
+  futures_context:
+    source:
+      ws:
+        - { service: "um_ws", stream: "mark_price_1s" }
+        - { service: "um_ws", stream: "ticker_24h" }
+      rest:
+        - { service: "um_rest", endpoint: "premium_index", interval_sec: 5 }
+        - { service: "um_rest", endpoint: "ticker_24h", interval_sec: 5 }
+        - { service: "um_rest", endpoint: "funding_info", interval_sec: 300 }
+        - { service: "cm_rest", endpoint: "premium_index", interval_sec: 10 }
+        - { service: "cm_rest", endpoint: "ticker_24h", interval_sec: 10 }
+    sink:
+      table: "futures_snapshots"
+      mode: "append"
+
+metric_builders:
+  strike_1m:
+    source_tables:
+      - "option_trade_events"
+      - "option_mark_snapshots"
+      - "option_oi_snapshots"
+      - "option_index_snapshots"
+    formulas_ref:
+      - "premium_by_strike"
+      - "net_delta_flow_by_strike"
+      - "gex_flow_by_strike"
+      - "gex_oi_by_strike"
+    schedule:
+      every_sec: 1
+      persist_every_sec: 60
+    sink:
+      table: "derived_strike_metrics_1m"
+      mode: "upsert"
+      key: ["bucket_time", "expiry_group", "strike", "cp"]
+
+  expiry_1m:
+    source_tables:
+      - "option_ticker_24h_snapshots"
+      - "option_oi_snapshots"
+      - "option_trade_events"
+    formulas_ref:
+      - "volume_by_expiry_24h"
+      - "premium_by_expiry_24h"
+      - "trades_by_expiry_24h"
+      - "oi_by_expiry"
+      - "dominant_expiry_score"
+    schedule:
+      every_sec: 5
+      persist_every_sec: 60
+    sink:
+      table: "derived_expiry_metrics_1m"
+      mode: "upsert"
+      key: ["bucket_time", "expiry"]
+
+  maxpain_poc_1m:
+    source_tables:
+      - "option_oi_snapshots"
+      - "option_trade_events"
+      - "derived_expiry_metrics_1m"
+    formulas_ref:
+      - "max_pain_by_expiry"
+      - "poc_by_premium"
+    schedule:
+      every_sec: 10
+      persist_every_sec: 60
+    sink:
+      table: "derived_maxpain_poc_1m"
+      mode: "upsert"
+      key: ["bucket_time", "expiry"]
+
+  iv_surface_1m:
+    source_tables:
+      - "option_mark_snapshots"
+      - "option_index_snapshots"
+      - "derived_expiry_metrics_1m"
+    formulas_ref:
+      - "iv_smile_curve"
+      - "iv_skew"
+      - "atm_iv"
+    schedule:
+      every_sec: 1
+      persist_every_sec: 60
+    sink:
+      table: "derived_iv_surface_1m"
+      mode: "upsert"
+      key: ["bucket_time", "expiry_group", "strike"]
+
+dashboards:
+  maxpain_board:
+    panels:
+      - id: "header_kpi"
+        title: "Header KPIs"
+        inputs:
+          - "options_index"
+          - "options_ticker_24h"
+          - "futures_context"
+        metrics:
+          - "btc_index"
+          - "options_vol_24h_usdt"
+          - "options_trades_24h"
+          - "futures_trades_24h"
+          - "funding_rate_8h"
+        refresh:
+          ui_ms: 1000
+          reconcile_sec: 5
+        storage:
+          raw:
+            - "option_index_snapshots"
+            - "option_ticker_24h_snapshots"
+            - "futures_snapshots"
+          derived:
+            - "derived_signal_snapshots_1m"
+        chart:
+          type: "kpi_cards"
+          fields:
+            - "value"
+            - "delta_24h"
+
+      - id: "p1_0dte"
+        title: "0DTE MaxPain Panel"
+        expiry_group: "odte"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "price_line"
+          - "max_pain"
+          - "poc_premium"
+          - "option_bubbles_4color"
+        refresh:
+          ui_ms: 1000
+          maxpain_sec: 60
+        storage:
+          raw:
+            - "option_trade_events"
+            - "option_oi_snapshots"
+          derived:
+            - "derived_maxpain_poc_1m"
+            - "derived_signal_snapshots_1m"
+        chart:
+          type: "timeseries_overlay"
+          overlays:
+            - "max_pain_line_purple"
+            - "poc_line_yellow"
+            - "bubble_flow"
+
+      - id: "p2_1dte"
+        title: "1DTE MaxPain Panel"
+        expiry_group: "d1"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "price_line"
+          - "max_pain"
+          - "poc_premium"
+          - "option_bubbles_4color"
+        refresh:
+          ui_ms: 1000
+          maxpain_sec: 60
+        storage:
+          raw:
+            - "option_trade_events"
+            - "option_oi_snapshots"
+          derived:
+            - "derived_maxpain_poc_1m"
+        chart:
+          type: "timeseries_overlay"
+          overlays:
+            - "max_pain_line_purple"
+            - "poc_line_yellow"
+            - "bubble_flow"
+
+      - id: "p3_weekly"
+        title: "Weekly MaxPain Panel"
+        expiry_group: "weekly"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "price_line"
+          - "max_pain"
+          - "poc_premium"
+          - "option_bubbles_4color"
+        refresh:
+          ui_ms: 1000
+          maxpain_sec: 60
+        storage:
+          raw:
+            - "option_trade_events"
+            - "option_oi_snapshots"
+          derived:
+            - "derived_maxpain_poc_1m"
+        chart:
+          type: "timeseries_overlay"
+          overlays:
+            - "max_pain_line_purple"
+            - "poc_line_yellow"
+            - "bubble_flow"
+
+      - id: "p4_monthly"
+        title: "Monthly MaxPain Panel"
+        expiry_group: "monthly"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "price_line"
+          - "max_pain"
+          - "poc_premium"
+          - "option_bubbles_4color"
+        refresh:
+          ui_ms: 1000
+          maxpain_sec: 60
+        storage:
+          raw:
+            - "option_trade_events"
+            - "option_oi_snapshots"
+          derived:
+            - "derived_maxpain_poc_1m"
+        chart:
+          type: "timeseries_overlay"
+          overlays:
+            - "max_pain_line_purple"
+            - "poc_line_yellow"
+            - "bubble_flow"
+
+      - id: "big_trades"
+        title: "Big Trades List"
+        inputs:
+          - "options_trade_flow"
+          - "options_rest.block_trades"
+        metrics:
+          - "big_trade_feed"
+        refresh:
+          ui_ms: 500
+          reconcile_sec: 10
+        filters:
+          premium_usdt_gte: 100000
+        storage:
+          raw:
+            - "option_trade_events"
+        chart:
+          type: "event_table"
+          columns:
+            - "time"
+            - "symbol"
+            - "side"
+            - "premium_usdt"
+            - "qty"
+
+  analytics_board:
+    panels:
+      - id: "pa1_volume_by_strike_all_exp"
+        title: "BTC Volume by Strike (All Exp)"
+        inputs:
+          - "options_trade_flow"
+          - "options_symbols"
+        metrics:
+          - "volume_by_strike"
+        refresh:
+          ui_ms: 1000
+          rollup_sec: 60
+        storage:
+          raw:
+            - "option_trade_events"
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "horizontal_bar"
+          stacking: "bull_vs_bear"
+
+      - id: "pa2_volume_by_expiry_last24h"
+        title: "BTC Volume by Expiration (Last 24h)"
+        inputs:
+          - "options_ticker_24h"
+        metrics:
+          - "volume_by_expiry_24h"
+          - "premium_by_expiry_24h"
+        refresh:
+          ui_ms: 1000
+          reconcile_sec: 60
+        storage:
+          raw:
+            - "option_ticker_24h_snapshots"
+          derived:
+            - "derived_expiry_metrics_1m"
+        chart:
+          type: "column"
+          series:
+            - "bullish_sm"
+            - "bearish_sm"
+            - "bulls_line"
+            - "bears_line"
+
+      - id: "pa3_oi_by_expiry"
+        title: "BTC Open Interest by Expiration"
+        inputs:
+          - "options_oi"
+        metrics:
+          - "oi_by_expiry"
+        refresh:
+          ui_ms: 1000
+          oi_sec: 60
+        storage:
+          raw:
+            - "option_oi_snapshots"
+          derived:
+            - "derived_expiry_metrics_1m"
+        chart:
+          type: "column"
+          series:
+            - "bullish_sm"
+            - "bearish_sm"
+            - "bulls_line"
+            - "bears_line"
+
+      - id: "pa4_odte_information"
+        title: "ODTE Information Card"
+        inputs:
+          - "options_index"
+          - "derived_expiry_metrics_1m"
+          - "derived_maxpain_poc_1m"
+        metrics:
+          - "atm_strike"
+          - "top_volume_strike"
+          - "top_volume_expiration"
+          - "strike_vs_index"
+        refresh:
+          ui_ms: 1000
+          recalc_sec: 5
+        storage:
+          derived:
+            - "derived_signal_snapshots_1m"
+        chart:
+          type: "kpi_card"
+
+      - id: "pa10_net_delta_by_strike_all_exp"
+        title: "Net Delta by Strike (All Exp)"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+        metrics:
+          - "net_delta_flow_by_strike"
+        refresh:
+          ui_ms: 1000
+          rollup_sec: 60
+        storage:
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "horizontal_diverging_bar"
+          axis_unit: "delta_contract_equiv"
+
+      - id: "pa11_gex_by_strike_all_exp"
+        title: "Gamma Exposure (GEX) by Strike (All Exp)"
+        inputs:
+          - "options_oi"
+          - "options_mark_surface"
+          - "options_index"
+        metrics:
+          - "gex_oi_by_strike"
+        refresh:
+          ui_ms: 1000
+          recalc_sec: 60
+        storage:
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "horizontal_diverging_bar"
+          axis_unit: "usd_per_1pct_move"
+
+      - id: "pa12_1_iv_smile_0dte"
+        title: "IV Smile (0DTE)"
+        expiry_group: "odte"
+        inputs:
+          - "options_mark_surface"
+          - "options_index"
+        metrics:
+          - "iv_smile_curve"
+          - "atm_iv"
+          - "iv_skew"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_iv_surface_1m"
+        chart:
+          type: "line"
+          x: "strike"
+          y: "iv_percent"
+
+      - id: "pa12_2_iv_smile_wdte"
+        title: "IV Smile (wDTE)"
+        expiry_group: "weekly"
+        inputs:
+          - "options_mark_surface"
+          - "options_index"
+        metrics:
+          - "iv_smile_curve"
+          - "atm_iv"
+          - "iv_skew"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_iv_surface_1m"
+        chart:
+          type: "line"
+          x: "strike"
+          y: "iv_percent"
+
+      - id: "pa12_3_iv_smile_mdte"
+        title: "IV Smile (mDTE)"
+        expiry_group: "monthly"
+        inputs:
+          - "options_mark_surface"
+          - "options_index"
+        metrics:
+          - "iv_smile_curve"
+          - "atm_iv"
+          - "iv_skew"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_iv_surface_1m"
+        chart:
+          type: "line"
+          x: "strike"
+          y: "iv_percent"
+
+      - id: "pa12_4_iv_smile_all_exp"
+        title: "IV Smile (All Exp)"
+        expiry_group: "all"
+        inputs:
+          - "options_mark_surface"
+          - "options_index"
+        metrics:
+          - "iv_smile_curve_all_exp"
+          - "atm_iv"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_iv_surface_1m"
+        chart:
+          type: "line_overlay"
+          x: "strike"
+          y: "iv_percent"
+
+      - id: "pa5_premium_delta_gex_odte"
+        title: "Premium | Delta | GEX (0DTE)"
+        expiry_group: "odte"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "premium_by_strike"
+          - "net_delta_flow_by_strike"
+          - "gex_oi_by_strike"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "triple_bar"
+
+      - id: "pa6_premium_delta_gex_wdte"
+        title: "Premium | Delta | GEX (wDTE)"
+        expiry_group: "weekly"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "premium_by_strike"
+          - "net_delta_flow_by_strike"
+          - "gex_oi_by_strike"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "triple_bar"
+
+      - id: "pa7_premium_delta_gex_mdte"
+        title: "Premium | Delta | GEX (mDTE)"
+        expiry_group: "monthly"
+        inputs:
+          - "options_trade_flow"
+          - "options_mark_surface"
+          - "options_oi"
+          - "options_index"
+        metrics:
+          - "premium_by_strike"
+          - "net_delta_flow_by_strike"
+          - "gex_oi_by_strike"
+        refresh:
+          ui_ms: 1000
+        storage:
+          derived:
+            - "derived_strike_metrics_1m"
+        chart:
+          type: "triple_bar"
+
+alert_rules:
+  bubble_anomaly:
+    source: "option_trade_events"
+    formula_ref: "bubble_anomaly_score"
+    trigger:
+      any:
+        - "premium_usdt >= 100000"
+        - "bubble_anomaly_score >= 3.0"
+    action:
+      - "persist signal snapshot"
+      - "telegram notify if enabled"
+
+  mp_divergence_reversion_buy:
+    formula_ref: "otl_mp_divergence_reversion_buy"
+    source:
+      - "derived_maxpain_poc_1m"
+      - "derived_expiry_metrics_1m"
+      - "option_index_snapshots"
+    recalc_sec: 5
+
+  mp_divergence_reversion_sell:
+    formula_ref: "otl_mp_divergence_reversion_sell"
+    source:
+      - "derived_maxpain_poc_1m"
+      - "derived_expiry_metrics_1m"
+      - "option_index_snapshots"
+    recalc_sec: 5

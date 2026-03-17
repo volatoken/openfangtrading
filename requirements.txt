@@ -1,3 +1,5 @@
 # Core demo runs on Python standard library only.
 # Optional: pip install faiss-cpu
 # Optional for Telegram user session mode: pip install telethon
+# Required for Binance live WebSocket ingest mode:
+websocket-client>=1.8.0

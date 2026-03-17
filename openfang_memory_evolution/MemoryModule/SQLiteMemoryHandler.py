@@ -128,6 +128,115 @@ class SQLiteMemoryHandler:
                 parsed_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS option_trade_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_time TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                cp TEXT NOT NULL,
+                side TEXT NOT NULL,
+                price REAL NOT NULL,
+                qty REAL NOT NULL,
+                premium_usdt REAL NOT NULL,
+                trade_type TEXT NOT NULL DEFAULT 'MARKET',
+                source TEXT NOT NULL DEFAULT 'binance_ws',
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_trade_events_symbol_time
+            ON option_trade_events(symbol, event_time);
+
+            CREATE TABLE IF NOT EXISTS option_mark_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                cp TEXT NOT NULL,
+                mark_price REAL NOT NULL,
+                bid_iv REAL,
+                ask_iv REAL,
+                mark_iv REAL,
+                delta REAL,
+                gamma REAL,
+                theta REAL,
+                vega REAL,
+                index_price REAL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_mark_snapshots_symbol_ts
+            ON option_mark_snapshots(symbol, ts);
+
+            CREATE TABLE IF NOT EXISTS option_oi_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                cp TEXT NOT NULL,
+                oi_contracts REAL NOT NULL,
+                oi_usdt REAL NOT NULL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_oi_snapshots_symbol_ts
+            ON option_oi_snapshots(symbol, ts);
+
+            CREATE TABLE IF NOT EXISTS option_ticker_24h_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                cp TEXT NOT NULL,
+                volume_contracts REAL NOT NULL,
+                amount_usdt REAL NOT NULL,
+                trade_count INTEGER NOT NULL,
+                last_price REAL NOT NULL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_ticker_24h_symbol_ts
+            ON option_ticker_24h_snapshots(symbol, ts);
+
+            CREATE TABLE IF NOT EXISTS option_index_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                underlying TEXT NOT NULL,
+                index_price REAL NOT NULL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_option_index_snapshots_ts
+            ON option_index_snapshots(ts);
+
+            CREATE TABLE IF NOT EXISTS futures_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                mark_price REAL,
+                index_price REAL,
+                funding_rate REAL,
+                next_funding_time TEXT,
+                volume_24h REAL,
+                quote_volume_24h REAL,
+                trades_24h INTEGER,
+                oi REAL,
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_futures_snapshots_market_symbol_ts
+            ON futures_snapshots(market, symbol, ts);
             """
         )
         self._conn.commit()
@@ -589,6 +698,244 @@ class SQLiteMemoryHandler:
             (source_key, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def insert_option_trade_event(
+        self,
+        event_time: str,
+        symbol: str,
+        side: str,
+        price: float,
+        qty: float,
+        premium_usdt: float,
+        trade_type: str,
+        source: str,
+        raw_json: dict[str, Any],
+    ) -> None:
+        expiry, strike, cp = self._parse_option_symbol(symbol)
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO option_trade_events (
+                event_time, symbol, expiry, strike, cp, side, price, qty, premium_usdt, trade_type, source, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_time,
+                symbol,
+                expiry,
+                strike,
+                cp,
+                side,
+                float(price),
+                float(qty),
+                float(premium_usdt),
+                trade_type,
+                source,
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_option_mark_snapshot(
+        self,
+        ts: str,
+        symbol: str,
+        mark_price: float,
+        bid_iv: float | None,
+        ask_iv: float | None,
+        mark_iv: float | None,
+        delta: float | None,
+        gamma: float | None,
+        theta: float | None,
+        vega: float | None,
+        index_price: float | None,
+        raw_json: dict[str, Any],
+    ) -> None:
+        expiry, strike, cp = self._parse_option_symbol(symbol)
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO option_mark_snapshots (
+                ts, symbol, expiry, strike, cp, mark_price, bid_iv, ask_iv, mark_iv,
+                delta, gamma, theta, vega, index_price, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                symbol,
+                expiry,
+                strike,
+                cp,
+                float(mark_price),
+                bid_iv,
+                ask_iv,
+                mark_iv,
+                delta,
+                gamma,
+                theta,
+                vega,
+                index_price,
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_option_oi_snapshot(
+        self,
+        ts: str,
+        symbol: str,
+        oi_contracts: float,
+        oi_usdt: float,
+        raw_json: dict[str, Any],
+    ) -> None:
+        expiry, strike, cp = self._parse_option_symbol(symbol)
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO option_oi_snapshots (
+                ts, symbol, expiry, strike, cp, oi_contracts, oi_usdt, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                symbol,
+                expiry,
+                strike,
+                cp,
+                float(oi_contracts),
+                float(oi_usdt),
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_option_ticker_24h_snapshot(
+        self,
+        ts: str,
+        symbol: str,
+        volume_contracts: float,
+        amount_usdt: float,
+        trade_count: int,
+        last_price: float,
+        raw_json: dict[str, Any],
+    ) -> None:
+        expiry, strike, cp = self._parse_option_symbol(symbol)
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO option_ticker_24h_snapshots (
+                ts, symbol, expiry, strike, cp, volume_contracts, amount_usdt, trade_count, last_price, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                symbol,
+                expiry,
+                strike,
+                cp,
+                float(volume_contracts),
+                float(amount_usdt),
+                int(trade_count),
+                float(last_price),
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_option_index_snapshot(
+        self,
+        ts: str,
+        underlying: str,
+        index_price: float,
+        raw_json: dict[str, Any],
+    ) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO option_index_snapshots (
+                ts, underlying, index_price, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                underlying,
+                float(index_price),
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_futures_snapshot(
+        self,
+        ts: str,
+        market: str,
+        symbol: str,
+        mark_price: float | None,
+        index_price: float | None,
+        funding_rate: float | None,
+        next_funding_time: str | None,
+        volume_24h: float | None,
+        quote_volume_24h: float | None,
+        trades_24h: int | None,
+        oi: float | None,
+        raw_json: dict[str, Any],
+    ) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO futures_snapshots (
+                ts, market, symbol, mark_price, index_price, funding_rate, next_funding_time,
+                volume_24h, quote_volume_24h, trades_24h, oi, raw_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                market,
+                symbol,
+                mark_price,
+                index_price,
+                funding_rate,
+                next_funding_time,
+                volume_24h,
+                quote_volume_24h,
+                trades_24h,
+                oi,
+                json.dumps(raw_json),
+                now,
+            ),
+        )
+        self._conn.commit()
+
+    def _parse_option_symbol(self, symbol: str) -> tuple[str, float, str]:
+        parts = symbol.split("-")
+        if len(parts) < 4:
+            return ("", 0.0, "")
+        raw_expiry = parts[1].upper()
+        expiry = raw_expiry
+        if len(raw_expiry) == 6 and raw_expiry.isdigit():
+            try:
+                dt = datetime.strptime(raw_expiry, "%y%m%d")
+                expiry = dt.strftime("%d%b%y").upper()
+            except ValueError:
+                expiry = raw_expiry
+        strike = 0.0
+        try:
+            strike = float(parts[2])
+        except ValueError:
+            strike = 0.0
+        cp = parts[3].upper()
+        return (expiry, strike, cp)
 
     def _row_to_strategy(self, row: sqlite3.Row) -> StrategyRecord:
         embedding = [float(x) for x in json.loads(row["embedding_json"])]

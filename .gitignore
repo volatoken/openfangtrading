@@ -6,6 +6,10 @@ __pycache__/
 # Local runtime data
 openfang_memory_evolution/data/*.db
 openfang_memory_evolution/data/*.json
+openfang_memory_evolution/data/*.db-journal
+openfang_memory_evolution/data/*.db-wal
+openfang_memory_evolution/data/*.db-shm
+run_logs/*.log
 
 # Local tools
 tools/

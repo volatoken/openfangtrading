@@ -64,6 +64,52 @@ pip install faiss-cpu
 python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 10
 ```
 
+## Localhost Metrics Dashboard
+
+After generating some cycles (so DB has data), run:
+
+```bash
+python -m openfang_memory_evolution.app --serve-dashboard --dashboard-host 127.0.0.1 --dashboard-port 8088
+```
+
+Open:
+
+```text
+http://127.0.0.1:8088
+```
+
+Tip for quick demo data:
+
+```bash
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 30
+```
+
+## Live Binance Ingest (eapi + fapi + dapi + websocket)
+
+Run live ingest worker only:
+
+```bash
+python -m openfang_memory_evolution.app --binance-live-only --binance-underlying BTCUSDT --binance-um-symbol BTCUSDT --binance-cm-symbol BTCUSD_PERP --binance-rest-poll-seconds 15
+```
+
+If you need REST-only mode (no websocket):
+
+```bash
+python -m openfang_memory_evolution.app --binance-live-only --binance-disable-ws
+```
+
+Run trading cycles and poll live REST snapshot before each cycle:
+
+```bash
+python -m openfang_memory_evolution.app --symbol BTCUSDT --cycles 20 --binance-live-ingest
+```
+
+Then open dashboard:
+
+```bash
+python -m openfang_memory_evolution.app --serve-dashboard
+```
+
 ## Telegram Data Sync (continuous ingestion)
 
 You can continuously ingest Telegram channel posts and store them in SQLite using:

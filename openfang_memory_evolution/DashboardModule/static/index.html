@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenFang OTL Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --bg: #050b16;
+      --panel: #0a1529;
+      --panel-2: #0e1a33;
+      --line: rgba(85, 122, 194, 0.24);
+      --text: #d9e6ff;
+      --muted: #8da5cf;
+      --yellow: #f1b847;
+      --purple: #b06bff;
+      --teal: #39bfd3;
+      --red: #e86c6c;
+      --green: #67d2a0;
+      --white: #eaf2ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1100px 500px at 15% -10%, rgba(44, 105, 191, 0.2), transparent 62%),
+        radial-gradient(900px 420px at 98% 0%, rgba(21, 196, 205, 0.13), transparent 55%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "IBM Plex Sans", sans-serif;
+    }
+
+    .container {
+      max-width: 1920px;
+      margin: 0 auto;
+      padding: 10px 12px 14px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .title {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      color: #f5fbff;
+      text-transform: uppercase;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .kpi {
+      background: linear-gradient(175deg, #0c1a34, #09162f);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 10px;
+      min-height: 64px;
+    }
+
+    .kpi .label {
+      font-size: 10px;
+      color: #9cb0d6;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .kpi .value {
+      font-size: 35px;
+      line-height: 1;
+      font-weight: 800;
+      color: #f5fbff;
+      letter-spacing: 0.4px;
+    }
+
+    .tabbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .tab-btn {
+      border: 1px solid rgba(86, 118, 178, 0.62);
+      border-radius: 9px;
+      background: linear-gradient(165deg, #102345, #0c1a33);
+      color: #dce7ff;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      border-color: rgba(61, 214, 229, 0.95);
+      color: #ebfeff;
+      box-shadow: inset 0 0 0 1px rgba(61, 214, 229, 0.2);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .otf-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(170deg, #0a1630, #091426);
+      margin-bottom: 10px;
+      font-size: 11px;
+      color: #a4b7d8;
+    }
+
+    .otf-left, .otf-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      padding: 3px 7px;
+      border-radius: 6px;
+      border: 1px solid rgba(110, 150, 218, 0.45);
+      background: rgba(10, 28, 55, 0.9);
+      color: #d8e8ff;
+      font-size: 10px;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .chip.active {
+      border-color: rgba(50, 222, 239, 0.95);
+      color: #edffff;
+      background: rgba(8, 45, 66, 0.95);
+    }
+
+    .otf-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      min-height: calc(100vh - 265px);
+    }
+
+    .panel {
+      background: linear-gradient(168deg, var(--panel-2), var(--panel));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px 6px 4px;
+    }
+
+    .panel h3 {
+      margin: 2px 4px 6px;
+      font-size: 12px;
+      color: #dcebff;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+    }
+
+    .otf-panel {
+      min-height: calc((100vh - 280px) / 2);
+    }
+
+    .otf-panel .plot {
+      height: calc((100vh - 334px) / 2);
+      min-height: 290px;
+    }
+
+    .plot {
+      width: 100%;
+      height: 235px;
+    }
+
+    .analytics-top {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .grid-mid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .grid-bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .info {
+      margin: 2px 6px 8px;
+      color: #9fb4d8;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .big-wrap {
+      max-height: 310px;
+      overflow: auto;
+    }
+
+    .trade-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      color: #deebff;
+    }
+
+    .trade-table th, .trade-table td {
+      border-bottom: 1px solid rgba(126, 151, 203, 0.22);
+      padding: 6px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .trade-table th:first-child,
+    .trade-table td:first-child,
+    .trade-table th:nth-child(2),
+    .trade-table td:nth-child(2) {
+      text-align: left;
+    }
+
+    .side-long { color: var(--green); }
+    .side-short { color: var(--red); }
+
+    @media (max-width: 1500px) {
+      .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .otf-grid { grid-template-columns: 1fr; min-height: auto; }
+      .otf-panel { min-height: 360px; }
+      .otf-panel .plot { height: 320px; }
+      .grid-mid { grid-template-columns: 1fr 1fr; }
+      .grid-bottom { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="title">OpenFang OTL Metrics</div>
+      <div class="meta" id="metaLine">Loading...</div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="label">BTC Index</div><div class="value" id="kpiIndex">-</div></div>
+      <div class="kpi"><div class="label">Options 24H Vol (USDT)</div><div class="value" id="kpiOptVol">-</div></div>
+      <div class="kpi"><div class="label">Options 24H Trades</div><div class="value" id="kpiOptTrades">-</div></div>
+      <div class="kpi"><div class="label">Futures 24H Trades</div><div class="value" id="kpiFutTrades">-</div></div>
+      <div class="kpi"><div class="label">Funding (8H)</div><div class="value" id="kpiFunding">-</div></div>
+    </div>
+
+    <div class="tabbar">
+      <button class="tab-btn active" data-tab="tab-otl">Tab 1: OTL P1-P4</button>
+      <button class="tab-btn" data-tab="tab-analytics">Tab 2: Analytics</button>
+    </div>
+
+    <div id="tab-otl" class="tab-content active">
+      <div class="otf-strip">
+        <div class="otf-left">
+          <span class="chip">Timeframe</span>
+          <span class="chip">24H</span>
+          <span class="chip">7D</span>
+          <span class="chip active">First Trade</span>
+          <span class="chip">Min Premium: 10000</span>
+          <span class="chip active">Live</span>
+          <span class="chip active" id="chipStrict" style="cursor:pointer;">OTL Strict</span>
+        </div>
+        <div class="otf-right">
+          <span>OTL style panel (Price, MP, POC, Bubbles, Strike Flow)</span>
+        </div>
+      </div>
+      <div class="otf-grid">
+        <div class="panel otf-panel"><h3 id="titleP1">P1 0DTE</h3><div id="plotP1" class="plot"></div></div>
+        <div class="panel otf-panel"><h3 id="titleP2">P2 1DTE</h3><div id="plotP2" class="plot"></div></div>
+        <div class="panel otf-panel"><h3 id="titleP3">P3 Weekly</h3><div id="plotP3" class="plot"></div></div>
+        <div class="panel otf-panel"><h3 id="titleP4">P4 Monthly</h3><div id="plotP4" class="plot"></div></div>
+      </div>
+    </div>
+
+    <div id="tab-analytics" class="tab-content">
+      <div class="analytics-top">
+        <div class="panel">
+          <h3>Big Trades (&gt;= 100k)</h3>
+          <div class="big-wrap">
+            <table class="trade-table" id="bigTradesTable">
+              <thead><tr><th>Time</th><th>Side</th><th>Strike</th><th>Premium</th><th>Cts</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-mid">
+        <div class="panel"><h3>Pa1 Volume by Strike (All)</h3><div id="plotPa1" class="plot"></div></div>
+        <div class="panel"><h3>Pa2 Volume by Expiry (24H)</h3><div id="plotPa2" class="plot"></div></div>
+        <div class="panel"><h3>Pa3 OI by Expiry (Proxy)</h3><div id="plotPa3" class="plot"></div></div>
+        <div class="panel">
+          <h3>Pa4 ODTE Information</h3>
+          <div class="info" id="pa4Info">-</div>
+          <div id="plotPa10" class="plot" style="height:180px;"></div>
+        </div>
+      </div>
+
+      <div class="grid-mid">
+        <div class="panel"><h3>Pa10 Net Delta by Strike</h3><div id="plotDelta" class="plot"></div></div>
+        <div class="panel"><h3>Pa11 GEX by Strike</h3><div id="plotGex" class="plot"></div></div>
+        <div class="panel"><h3>Pa12.1 IV Smile (0DTE)</h3><div id="plotIv0" class="plot"></div></div>
+        <div class="panel"><h3>Pa12.2 IV Smile (Weekly)</h3><div id="plotIvW" class="plot"></div></div>
+      </div>
+
+      <div class="grid-bottom">
+        <div class="panel"><h3>Pa12.3 IV Smile (Monthly)</h3><div id="plotIvM" class="plot"></div></div>
+        <div class="panel"><h3>Pa5 Premium | Delta | GEX (0DTE)</h3><div id="plotPDG0" class="plot"></div></div>
+        <div class="panel"><h3>Pa6/Pa7 Premium | Delta | GEX (W/M)</h3><div id="plotPDGWM" class="plot"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const baseLayout = {
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      margin: { l: 42, r: 26, t: 4, b: 28 },
+      font: { color: '#d8e7ff', family: 'Segoe UI, sans-serif', size: 11 },
+      showlegend: true,
+      legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, x: 0.01, font: { size: 10 } }
+    };
+
+    const axisStyle = {
+      gridcolor: 'rgba(88,121,180,0.18)',
+      zerolinecolor: 'rgba(88,121,180,0.26)',
+      tickfont: { color: '#bdd0ef', size: 10 }
+    };
+
+    const tabPlotIds = {
+      'tab-otl': ['plotP1', 'plotP2', 'plotP3', 'plotP4'],
+      'tab-analytics': [
+        'plotPa1', 'plotPa2', 'plotPa3', 'plotPa10',
+        'plotDelta', 'plotGex', 'plotIv0', 'plotIvW', 'plotIvM', 'plotPDG0', 'plotPDGWM'
+      ]
+    };
+    const appState = { otlStrict: true };
+
+    function fmtNum(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) return '-';
+      return Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function formatExpiryLabel(expiry) {
+      const s = String(expiry || '').toUpperCase();
+      const m = s.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
+      if (!m) return s;
+      return `${Number(m[1])} ${m[2]}`;
+    }
+
+    function activateTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+      });
+      document.querySelectorAll('.tab-content').forEach(el => {
+        el.classList.toggle('active', el.id === tabId);
+      });
+      const ids = tabPlotIds[tabId] || [];
+      setTimeout(() => {
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          try { Plotly.Plots.resize(el); } catch (_) {}
+        });
+      }, 60);
+    }
+
+    function setupTabs() {
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+      });
+      window.addEventListener('resize', () => {
+        const active = document.querySelector('.tab-content.active');
+        if (!active) return;
+        const ids = tabPlotIds[active.id] || [];
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          try { Plotly.Plots.resize(el); } catch (_) {}
+        });
+      });
+    }
+
+    function setupControls() {
+      const strictChip = document.getElementById('chipStrict');
+      if (!strictChip) return;
+      strictChip.classList.toggle('active', !!appState.otlStrict);
+      strictChip.addEventListener('click', () => {
+        appState.otlStrict = !appState.otlStrict;
+        strictChip.classList.toggle('active', !!appState.otlStrict);
+        refresh();
+      });
+    }
+
+    function aggregateStrikeVolume(panel, bubbles) {
+      const m = {};
+      const sf = Array.isArray(panel?.strike_flow) ? panel.strike_flow : [];
+      if (sf.length > 0) {
+        sf.forEach(x => {
+          const strike = Number(x.strike || 0);
+          const prem = Number(x.premium_usd || 0);
+          if (!Number.isFinite(strike) || strike <= 0 || prem <= 0) return;
+          m[strike] = (m[strike] || 0) + prem;
+        });
+      } else {
+        (bubbles || []).forEach(b => {
+          const strike = Number(b.strike || 0);
+          const prem = Number(b.premium_usd || 0);
+          if (!Number.isFinite(strike) || strike <= 0 || prem <= 0) return;
+          m[strike] = (m[strike] || 0) + prem;
+        });
+      }
+      const strikes = Object.keys(m).map(Number).sort((a, b) => a - b);
+      const volsRaw = strikes.map(s => m[s]);
+      const maxV = Math.max(1, ...volsRaw);
+      const volsNorm = volsRaw.map(v => v / maxV);
+      return { strikes, volsRaw, volsNorm };
+    }
+
+    function renderOTLPanel(targetId, panel, realtimePrice = 0, isMonthly = false) {
+      const times = (panel.price_series || []).map(x => x.ts);
+      const prices = (panel.price_series || []).map(x => Number(x.price || 0));
+      const bubbles = panel.bubbles || [];
+      const strikeBars = aggregateStrikeVolume(panel, bubbles);
+
+      const sideColor = {
+        long_call: '#4bb8ff',
+        short_call: '#f16c6c',
+        long_put: '#eda83b',
+        short_put: '#60d7a6'
+      };
+      const sideScale = {
+        long_call: 1.18,
+        short_call: 0.9,
+        long_put: 1.08,
+        short_put: 0.86
+      };
+      const sideOpacity = {
+        long_call: 0.58,
+        short_call: 0.45,
+        long_put: 0.55,
+        short_put: 0.43
+      };
+      const bubbleSizes = bubbles.map(x => {
+        const side = x.side || '';
+        const baseSize = Math.max(5, Number(x.size || 6));
+        const scaled = baseSize * (sideScale[side] || 1.0);
+        return Math.max(5, Math.min(56, scaled));
+      });
+      const bubbleOpacities = bubbles.map(x => sideOpacity[x.side] || 0.5);
+
+      const bubbleTrace = {
+        x: bubbles.map(x => x.ts),
+        y: bubbles.map(x => Number(x.strike || 0)),
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Bubbles',
+        marker: {
+          size: bubbleSizes,
+          color: bubbles.map(x => sideColor[x.side] || '#9db2ff'),
+          opacity: bubbleOpacities,
+          line: { color: 'rgba(255,255,255,0.12)', width: 0.7 }
+        },
+        xaxis: 'x',
+        yaxis: 'y',
+        customdata: bubbles.map(x => [String(x.side || '').toUpperCase()]),
+        hovertemplate: 'Strike %{y}<br>Side %{customdata[0]}<br>Premium %{text}<extra></extra>',
+        text: bubbles.map(x => fmtNum(x.premium_usd))
+      };
+
+      const priceTrace = {
+        x: times,
+        y: prices,
+        mode: 'lines',
+        type: 'scatter',
+        name: 'Price',
+        line: { color: '#f3b443', width: 2.1 },
+        xaxis: 'x',
+        yaxis: 'y'
+      };
+
+      const mpTrace = {
+        x: times,
+        y: times.map(() => Number(panel.max_pain || 0)),
+        mode: 'lines',
+        type: 'scatter',
+        name: 'MaxPain',
+        line: { color: '#b56dff', width: 1.5, dash: 'dot' },
+        xaxis: 'x',
+        yaxis: 'y'
+      };
+
+      const pocTrace = {
+        x: times,
+        y: times.map(() => Number(panel.poc || 0)),
+        mode: 'lines',
+        type: 'scatter',
+        name: 'POC',
+        line: { color: '#f2c64d', width: 1.5, dash: 'dash' },
+        xaxis: 'x',
+        yaxis: 'y'
+      };
+
+      const barTrace = {
+        x: strikeBars.volsNorm,
+        y: strikeBars.strikes,
+        type: 'bar',
+        orientation: 'h',
+        name: 'Strike Flow',
+        marker: {
+          color: (() => {
+            const maxRaw = Math.max(0, ...(strikeBars.volsRaw || []));
+            return (strikeBars.volsRaw || []).map(v => {
+              if (v >= maxRaw && maxRaw > 0) return 'rgba(242, 198, 77, 0.95)';
+              return 'rgba(58, 201, 214, 0.58)';
+            });
+          })()
+        },
+        xaxis: 'x2',
+        yaxis: 'y',
+        hovertemplate: 'Strike %{y}<br>Flow %{x:.2f}<extra></extra>',
+        showlegend: false
+      };
+
+      const yCandidates = [];
+      prices.forEach(v => { if (v > 0) yCandidates.push(v); });
+      strikeBars.strikes.forEach(v => { if (v > 0) yCandidates.push(v); });
+      if (Number(panel.max_pain || 0) > 0) yCandidates.push(Number(panel.max_pain));
+      if (Number(panel.poc || 0) > 0) yCandidates.push(Number(panel.poc));
+      const lastPrice = prices.length ? prices[prices.length - 1] : 0;
+      const realPrice = Number(realtimePrice || 0) > 0 ? Number(realtimePrice) : lastPrice;
+      let yMin = yCandidates.length ? Math.min(...yCandidates) * 0.985 : 0;
+      let yMax = yCandidates.length ? Math.max(...yCandidates) * 1.015 : 1;
+      if (isMonthly && realPrice > 0) {
+        yMin = realPrice * 0.7;
+        yMax = realPrice * 1.3;
+      }
+
+      const shapes = [];
+      if (realPrice > 0) {
+        shapes.push({
+          type: 'line',
+          xref: 'paper',
+          x0: 0.17,
+          x1: 1.0,
+          yref: 'y',
+          y0: realPrice,
+          y1: realPrice,
+          line: { color: 'rgba(240, 246, 255, 0.78)', width: 1, dash: 'dot' }
+        });
+      }
+
+      const annotations = [];
+      if (Number(panel.max_pain || 0) > 0) {
+        annotations.push({
+          xref: 'paper', x: 1.005, yref: 'y', y: Number(panel.max_pain),
+          text: `${fmtNum(panel.max_pain)}`,
+          showarrow: false, xanchor: 'left', yanchor: 'middle',
+          font: { size: 10, color: '#f6edff' },
+          bgcolor: 'rgba(176, 107, 255, 0.92)',
+          bordercolor: 'rgba(234, 213, 255, 0.9)',
+          borderwidth: 1,
+          borderpad: 2
+        });
+      }
+      if (Number(panel.poc || 0) > 0) {
+        annotations.push({
+          xref: 'paper', x: 0.188, yref: 'y', y: Number(panel.poc),
+          text: `${fmtNum(panel.poc)}`,
+          showarrow: false, xanchor: 'right', yanchor: 'middle',
+          font: { size: 10, color: '#201506' },
+          bgcolor: 'rgba(242, 198, 77, 0.95)',
+          bordercolor: 'rgba(255, 236, 163, 0.9)',
+          borderwidth: 1,
+          borderpad: 2
+        });
+      }
+      if (realPrice > 0) {
+        annotations.push({
+          xref: 'paper', x: 1.005, yref: 'y', y: realPrice,
+          text: `${fmtNum(realPrice)}`,
+          showarrow: false, xanchor: 'left', yanchor: 'middle',
+          font: { size: 10, color: '#f7fbff' },
+          bgcolor: 'rgba(230, 240, 255, 0.18)',
+          bordercolor: 'rgba(235, 245, 255, 0.72)',
+          borderwidth: 1,
+          borderpad: 2
+        });
+      }
+
+      Plotly.react(
+        targetId,
+        [barTrace, bubbleTrace, priceTrace, mpTrace, pocTrace],
+        {
+          ...baseLayout,
+          margin: { l: 6, r: 52, t: 6, b: 28 },
+          xaxis: { ...axisStyle, domain: [0.19, 1.0], type: 'date' },
+          xaxis2: {
+            domain: [0, 0.16],
+            showgrid: false,
+            zeroline: false,
+            showticklabels: false
+          },
+          yaxis: {
+            ...axisStyle,
+            range: [yMin, yMax],
+            side: 'right'
+          },
+          shapes,
+          annotations
+        },
+        { displayModeBar: false, responsive: true }
+      );
+    }
+
+    function renderBar(divId, x, y, color, horizontal = false) {
+      Plotly.react(divId, [{
+        type: 'bar',
+        x: horizontal ? y : x,
+        y: horizontal ? x : y,
+        orientation: horizontal ? 'h' : 'v',
+        marker: { color }
+      }], {
+        ...baseLayout,
+        showlegend: false,
+        xaxis: { ...axisStyle },
+        yaxis: { ...axisStyle }
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function renderDualLine(divId, x, y1, y2, n1, n2) {
+      Plotly.react(divId, [
+        { x, y: y1, mode: 'lines+markers', name: n1, line: { color: '#66c9ff', width: 1.8 } },
+        { x, y: y2, mode: 'lines+markers', name: n2, line: { color: '#ff9d69', width: 1.8 } }
+      ], {
+        ...baseLayout,
+        xaxis: { ...axisStyle },
+        yaxis: { ...axisStyle }
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function renderPDG(divId, data, prefix) {
+      Plotly.react(divId, [
+        { type: 'bar', x: data.strikes, y: data.premium, name: `${prefix} Premium`, marker: { color: '#4dc5ff' } },
+        { type: 'bar', x: data.strikes, y: data.delta, name: `${prefix} Delta`, marker: { color: '#f4b74d' } },
+        { type: 'bar', x: data.strikes, y: data.gex, name: `${prefix} GEX`, marker: { color: '#ca82ff' } }
+      ], {
+        ...baseLayout,
+        barmode: 'group',
+        xaxis: { ...axisStyle },
+        yaxis: { ...axisStyle }
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function fillBigTrades(rows) {
+      const tbody = document.querySelector('#bigTradesTable tbody');
+      tbody.innerHTML = '';
+      rows.slice(0, 80).forEach(r => {
+        const tr = document.createElement('tr');
+        const sideCls = (r.side || '').includes('long') ? 'side-long' : 'side-short';
+        tr.innerHTML = `
+          <td>${(r.time || '').slice(11, 19)}</td>
+          <td class="${sideCls}">${r.side || ''}</td>
+          <td>${fmtNum(r.strike)}</td>
+          <td>${fmtNum(r.premium_usd)}</td>
+          <td>${fmtNum(r.contracts)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    let refreshInFlight = false;
+    let refreshTimer = null;
+
+    async function refresh() {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        const strict = appState.otlStrict ? 1 : 0;
+        const res = await fetch(`/api/metrics?otl_strict=${strict}`, { cache: 'no-store' });
+        const data = await res.json();
+        const h = data.header || {};
+
+        document.getElementById('kpiIndex').textContent = fmtNum(h.btc_index);
+        document.getElementById('kpiOptVol').textContent = fmtNum(h.options_24h_vol_usdt);
+        document.getElementById('kpiOptTrades').textContent = fmtNum(h.options_24h_trades);
+        document.getElementById('kpiFutTrades').textContent = fmtNum(h.futures_24h_trades);
+        document.getElementById('kpiFunding').textContent = fmtNum(h.funding_8h);
+
+        document.getElementById('metaLine').textContent =
+          `Updated ${new Date(data.timestamp).toLocaleTimeString()} | Points ${data.meta?.data_points || 0} | Mode ${data.meta?.otl_strict ? 'OTL-Strict' : 'Blend'} | DB ${data.meta?.db_path || '-'}`;
+
+        const mp = data.maxpain_panels || {};
+        const p1 = mp.p1_0dte || { price_series: [], bubbles: [], max_pain: 0, poc: 0 };
+        const p2 = mp.p2_1dte || { price_series: [], bubbles: [], max_pain: 0, poc: 0 };
+        const p3 = mp.p3_weekly || { price_series: [], bubbles: [], max_pain: 0, poc: 0 };
+        const p4 = mp.p4_monthly || { price_series: [], bubbles: [], max_pain: 0, poc: 0 };
+        const realtime = Number(h.btc_index || 0);
+
+        renderOTLPanel('plotP1', p1, realtime, false);
+        renderOTLPanel('plotP2', p2, realtime, false);
+        renderOTLPanel('plotP3', p3, realtime, false);
+        renderOTLPanel('plotP4', p4, realtime, true);
+
+        document.getElementById('titleP1').textContent = `P1 0DTE - ${formatExpiryLabel(p1.expiry || '')}`;
+        document.getElementById('titleP2').textContent = `P2 1DTE - ${formatExpiryLabel(p2.expiry || '')}`;
+        document.getElementById('titleP3').textContent = `P3 Weekly - ${formatExpiryLabel(p3.expiry || '')}`;
+        document.getElementById('titleP4').textContent = `P4 Monthly - ${formatExpiryLabel(p4.expiry || '')}`;
+
+        fillBigTrades(data.big_trades || []);
+
+        const an = data.analytics_panels || {};
+        const pa1 = an.pa1_volume_by_strike || { strikes: [], values: [] };
+        const pa2 = an.pa2_volume_by_expiry || { expiry: [], values: [] };
+        const pa3 = an.pa3_oi_by_expiry || { expiry: [], values: [] };
+        const pa10 = an.pa10_net_delta_by_strike || { strikes: [], values: [] };
+        const pa11 = an.pa11_gex_by_strike || { strikes: [], values: [] };
+        const iv = an.pa12_iv_smile || {};
+        const pdg = an.pa5_6_7_pdg || {};
+        const pa4 = an.pa4_odte_info || {};
+
+        renderBar('plotPa1', pa1.strikes, pa1.values, '#64c3f4', true);
+        renderBar('plotPa2', pa2.expiry, pa2.values, '#eab456', false);
+        renderBar('plotPa3', pa3.expiry, pa3.values, '#b58bf2', false);
+        renderBar('plotDelta', pa10.strikes, pa10.values, '#63d0f8', true);
+        renderBar('plotGex', pa11.strikes, pa11.values, '#d99aff', true);
+
+        renderDualLine('plotIv0', iv.odte?.strikes || [], iv.odte?.call_iv || [], iv.odte?.put_iv || [], 'Call IV', 'Put IV');
+        renderDualLine('plotIvW', iv.weekly?.strikes || [], iv.weekly?.call_iv || [], iv.weekly?.put_iv || [], 'Call IV', 'Put IV');
+        renderDualLine('plotIvM', iv.monthly?.strikes || [], iv.monthly?.call_iv || [], iv.monthly?.put_iv || [], 'Call IV', 'Put IV');
+
+        renderPDG('plotPDG0', pdg.odte || { strikes: [], premium: [], delta: [], gex: [] }, '0DTE');
+        const wm = {
+          strikes: (pdg.weekly?.strikes || []).slice(0, 18),
+          premium: (pdg.weekly?.premium || []).slice(0, 18),
+          delta: (pdg.weekly?.delta || []).slice(0, 18),
+          gex: (pdg.weekly?.gex || []).slice(0, 18)
+        };
+        renderPDG('plotPDGWM', wm, 'W/M');
+
+        document.getElementById('pa4Info').innerHTML = `
+          ATM Strike: <b>${fmtNum(pa4.atm_strike)}</b><br/>
+          Top Volume Strike: <b>${fmtNum(pa4.top_volume_strike)}</b><br/>
+          Top Volume Expiration: <b>${pa4.top_volume_expiration || '-'}</b><br/>
+          Strike vs Index: <b>${fmtNum(pa4.strike_vs_index)}</b>
+        `;
+        renderBar('plotPa10', pa10.strikes, pa10.values, '#f6d46b', false);
+      } catch (err) {
+        document.getElementById('metaLine').textContent = `Error: ${err}`;
+      } finally {
+        refreshInFlight = false;
+      }
+    }
+
+    function startRefreshLoop(intervalMs = 10000) {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+      }
+      refreshTimer = setInterval(refresh, intervalMs);
+    }
+
+    setupTabs();
+    setupControls();
+    refresh();
+    startRefreshLoop(10000);
+  </script>
+</body>
+</html>

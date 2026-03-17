@@ -40,6 +40,11 @@ from openfang_memory_evolution.TelegramUserModule.TelegramUserSyncService import
     TelegramUserSyncConfig,
     TelegramUserSyncService,
 )
+from openfang_memory_evolution.DashboardModule.LocalDashboardServer import run_server
+from openfang_memory_evolution.LiveIngestModule.BinanceLiveIngestService import (
+    BinanceLiveIngestConfig,
+    BinanceLiveIngestService,
+)
 
 
 class OpenFangEngine:
@@ -283,6 +288,18 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Sync loop iterations in --telegram-sync-only mode (0 means infinite)",
     )
+    parser.add_argument("--serve-dashboard", action="store_true", help="Run local web dashboard server and exit")
+    parser.add_argument("--dashboard-host", default="127.0.0.1", help="Dashboard bind host")
+    parser.add_argument("--dashboard-port", type=int, default=8088, help="Dashboard bind port")
+    parser.add_argument("--binance-live-ingest", action="store_true", help="Poll Binance live REST snapshots before each cycle")
+    parser.add_argument("--binance-live-only", action="store_true", help="Run Binance live ingest worker loop only")
+    parser.add_argument("--binance-base-asset", default="BTC", help="Binance base asset for options (example: BTC)")
+    parser.add_argument("--binance-underlying", default="BTCUSDT", help="Binance options underlying (example: BTCUSDT)")
+    parser.add_argument("--binance-um-symbol", default="BTCUSDT", help="Binance UM futures symbol")
+    parser.add_argument("--binance-cm-symbol", default="BTCUSD_PERP", help="Binance CM futures symbol")
+    parser.add_argument("--binance-rest-poll-seconds", type=int, default=15, help="Live ingest REST polling interval")
+    parser.add_argument("--binance-live-iterations", type=int, default=0, help="Iterations in --binance-live-only mode (0 infinite)")
+    parser.add_argument("--binance-disable-ws", action="store_true", help="Disable WebSocket streams in Binance live ingest")
     return parser.parse_args()
 
 
@@ -290,6 +307,44 @@ def main() -> None:
     args = parse_args()
     root = Path(__file__).resolve().parent
     settings = load_settings(root)
+    if args.serve_dashboard:
+        run_server(host=args.dashboard_host, port=int(args.dashboard_port), db_path=settings.sqlite_path)
+        return
+
+    live_config = BinanceLiveIngestConfig(
+        base_asset=str(args.binance_base_asset).upper(),
+        underlying=str(args.binance_underlying).upper(),
+        um_symbol=str(args.binance_um_symbol).upper(),
+        cm_symbol=str(args.binance_cm_symbol).upper(),
+        rest_poll_interval_sec=max(3, int(args.binance_rest_poll_seconds)),
+        ws_enabled=not bool(args.binance_disable_ws),
+    )
+
+    if args.binance_live_only:
+        live_handler = SQLiteMemoryHandler(settings.sqlite_path)
+        live_service = BinanceLiveIngestService(config=live_config, sqlite_handler=live_handler)
+        try:
+            try:
+                live_service.run_forever(iterations=int(args.binance_live_iterations))
+            except RuntimeError as exc:
+                if "websocket-client" in str(exc) and live_config.ws_enabled:
+                    print("[binance-live] websocket-client missing, fallback to REST-only mode.")
+                    fallback_config = BinanceLiveIngestConfig(
+                        base_asset=live_config.base_asset,
+                        underlying=live_config.underlying,
+                        um_symbol=live_config.um_symbol,
+                        cm_symbol=live_config.cm_symbol,
+                        rest_poll_interval_sec=live_config.rest_poll_interval_sec,
+                        ws_enabled=False,
+                    )
+                    live_service = BinanceLiveIngestService(config=fallback_config, sqlite_handler=live_handler)
+                    live_service.run_forever(iterations=int(args.binance_live_iterations))
+                else:
+                    raise
+        finally:
+            live_service.stop()
+            live_handler.close()
+        return
     use_user_sync = bool(args.telegram_user_sync or args.telegram_user_sync_only)
     should_sync_tg = (
         args.telegram_sync
@@ -383,6 +438,7 @@ def main() -> None:
 
     engine = OpenFangEngine(settings, telegram_source_key=(args.telegram_source_key if should_sync_tg else None))
     sync_service: Any = None
+    live_service: BinanceLiveIngestService | None = None
     if (args.telegram_sync or args.telegram_web_sync or args.telegram_user_sync) and should_sync_tg:
         if use_user_sync:
             sync_service = TelegramUserSyncService(config=tg_user_config, sqlite_handler=engine.sqlite_handler)
@@ -390,8 +446,20 @@ def main() -> None:
             sync_service = TelegramWebScrapeSyncService(config=tg_web_config, sqlite_handler=engine.sqlite_handler)
         else:
             sync_service = TelegramSyncService(config=tg_config, sqlite_handler=engine.sqlite_handler)
+    if args.binance_live_ingest:
+        rest_only_live_config = BinanceLiveIngestConfig(
+            base_asset=live_config.base_asset,
+            underlying=live_config.underlying,
+            um_symbol=live_config.um_symbol,
+            cm_symbol=live_config.cm_symbol,
+            rest_poll_interval_sec=live_config.rest_poll_interval_sec,
+            ws_enabled=False,
+        )
+        live_service = BinanceLiveIngestService(config=rest_only_live_config, sqlite_handler=engine.sqlite_handler)
     try:
         for i in range(args.cycles):
+            if live_service:
+                live_service.sync_rest_once()
             if sync_service and (args.telegram_sync or args.telegram_web_sync or args.telegram_user_sync):
                 result = sync_service.sync_once()
                 print(f"[telegram-sync] {result}")
